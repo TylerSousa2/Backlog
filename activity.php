@@ -1,16 +1,11 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/auth.php";
 require_once "includes/db.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
 
+$userId = currentUserId();
 
 /*
  * Procurar atividades das pessoas que seguimos

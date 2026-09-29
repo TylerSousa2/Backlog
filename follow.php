@@ -1,23 +1,23 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
 
-$currentUserId = $_SESSION["user_id"];
+requireLogin();
+
+verifyCsrfToken();
+
+$currentUserId = currentUserId();
 
 $profileUserId = $_POST["user_id"] ?? null;
 
-if (!$profileUserId) {
+if (!$profileUserId || !filter_var($profileUserId, FILTER_VALIDATE_INT)) {
     die("Utilizador inválido.");
 }
 
-if ($currentUserId == $profileUserId) {
+$profileUserId = (int) $profileUserId;
+
+if ($currentUserId === $profileUserId) {
     die("Não podes seguir a tua própria conta.");
 }
 

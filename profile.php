@@ -1,15 +1,11 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
 
-$currentUserId = $_SESSION["user_id"];
+requireLogin();
+
+$currentUserId = currentUserId();
 
 $profileUserId = $_GET["id"] ?? $currentUserId;
 
@@ -535,29 +531,31 @@ require_once "includes/header.php";
 
 <?php } else { ?>
 
-    <form method="POST" action="follow.php">
+<form method="POST" action="follow.php">
 
-        <input
-            type="hidden"
-            name="user_id"
-            value="<?php echo $user["id"]; ?>"
-        >
+    <?php echo csrfField(); ?>
 
-        <button type="submit">
+    <input
+        type="hidden"
+        name="user_id"
+        value="<?php echo $user["id"]; ?>"
+    >
 
-            <?php if ($isFollowing) { ?>
+    <button type="submit">
 
-                Deixar de seguir
+        <?php if ($isFollowing) { ?>
 
-            <?php } else { ?>
+            Deixar de seguir
 
-                Seguir
+        <?php } else { ?>
 
-            <?php } ?>
+            Seguir
 
-        </button>
+        <?php } ?>
 
-    </form>
+    </button>
+
+</form>
 
 <?php } ?>
 

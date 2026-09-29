@@ -1,7 +1,6 @@
 <?php
 
-session_start();
-
+require_once "includes/csrf.php";
 require_once "includes/rawg.php";
 require_once "includes/db.php";
 
@@ -182,13 +181,15 @@ if (!empty($reviews)) {
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
-    if (!isset($_SESSION["user_id"])) {
+    if (!isLoggedIn()) {
 
         echo "Tens de iniciar sessão para adicionar jogos à tua biblioteca.";
 
     } else {
 
-        $userId = $_SESSION["user_id"];
+        verifyCsrfToken();
+
+        $userId = currentUserId();
         $rawgId = $game["id"];
 
 
@@ -725,6 +726,8 @@ require_once "includes/header.php";
 
     <form method="POST">
 
+        <?php echo csrfField(); ?>
+
         <?php if ($inLibrary) { ?>
 
             <button
@@ -767,6 +770,8 @@ require_once "includes/header.php";
 <?php } else { ?>
 
     <form method="POST">
+
+        <?php echo csrfField(); ?>
 
         <label for="rating">
             Rating:
@@ -870,13 +875,15 @@ require_once "includes/header.php";
 
     <?php if ($review["user_id"] != $_SESSION["user_id"]) { ?>
 
-        <form method="POST" action="like.php">
+    <form method="POST" action="like.php">
 
-            <input
-                type="hidden"
-                name="review_id"
-                value="<?php echo $review["id"]; ?>"
-            >
+        <?php echo csrfField(); ?>
+
+        <input
+            type="hidden"
+            name="review_id"
+            value="<?php echo $review["id"]; ?>"
+        >
 
             <button type="submit">
 

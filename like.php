@@ -1,15 +1,13 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
+
+verifyCsrfToken();
+
+$userId = currentUserId();
 
 $reviewId = $_POST["review_id"] ?? null;
 $activityId = $_POST["activity_id"] ?? null;
@@ -29,6 +27,13 @@ if (
 */
 
 if ($reviewId) {
+
+    if (!filter_var($reviewId, FILTER_VALIDATE_INT)) {
+        die("Review inválida.");
+    }
+
+    $reviewId = (int) $reviewId;
+
 
     $sql = "SELECT
                 id,
@@ -55,7 +60,7 @@ if ($reviewId) {
     |--------------------------------------------------------------------------
     */
 
-    if ($review["user_id"] == $userId) {
+    if ((int) $review["user_id"] === $userId) {
         die("Não podes dar like na tua própria review.");
     }
 
@@ -166,6 +171,13 @@ if ($reviewId) {
 
 if ($activityId) {
 
+    if (!filter_var($activityId, FILTER_VALIDATE_INT)) {
+        die("Atividade inválida.");
+    }
+
+    $activityId = (int) $activityId;
+
+
     $sql = "SELECT
                 id,
                 user_id
@@ -191,7 +203,7 @@ if ($activityId) {
     |--------------------------------------------------------------------------
     */
 
-    if ($activity["user_id"] == $userId) {
+    if ((int) $activity["user_id"] === $userId) {
         die("Não podes dar like na tua própria atividade.");
     }
 
