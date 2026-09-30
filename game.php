@@ -24,18 +24,9 @@ $gameId = validateId(
 |--------------------------------------------------------------------------
 */
 
-$url = "https://api.rawg.io/api/games/" .
-    $gameId .
-    "?key=" .
-    urlencode($rawgApiKey);
-
-$response = @file_get_contents($url);
-
-if ($response === false) {
-    die("Não foi possível obter os dados do jogo.");
-}
-
-$game = json_decode($response, true);
+$game = rawgRequest(
+    "games/" . $gameId
+);
 
 if (
     !is_array($game) ||
