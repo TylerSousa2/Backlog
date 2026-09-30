@@ -35,6 +35,10 @@ if ($reviewId) {
     $reviewId = (int) $reviewId;
 
 
+    /*
+     * Procurar review
+     */
+
     $sql = "SELECT
                 id,
                 user_id
@@ -55,10 +59,8 @@ if ($reviewId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Não permitir like na própria review
-    |--------------------------------------------------------------------------
-    */
+     * Não permitir like na própria review
+     */
 
     if ((int) $review["user_id"] === $userId) {
         die("Não podes dar like na tua própria review.");
@@ -66,10 +68,8 @@ if ($reviewId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Verificar se já existe like
-    |--------------------------------------------------------------------------
-    */
+     * Verificar se já existe like
+     */
 
     $sql = "SELECT id
             FROM likes
@@ -87,10 +87,8 @@ if ($reviewId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Remover like
-    |--------------------------------------------------------------------------
-    */
+     * Remover like
+     */
 
     if ($like) {
 
@@ -105,15 +103,12 @@ if ($reviewId) {
             ":review_id" => $reviewId
         ]);
 
-    }
 
     /*
-    |--------------------------------------------------------------------------
-    | Adicionar like
-    |--------------------------------------------------------------------------
-    */
+     * Adicionar like
+     */
 
-    else {
+    } else {
 
         $sql = "INSERT INTO likes (
                     user_id,
@@ -130,14 +125,38 @@ if ($reviewId) {
             ":user_id" => $userId,
             ":review_id" => $reviewId
         ]);
+
+
+        /*
+         * Criar notificação
+         */
+
+$sql = "INSERT INTO notifications (
+            user_id,
+            sender_id,
+            review_id,
+            type
+        )
+        VALUES (
+            :user_id,
+            :sender_id,
+            :review_id,
+            'like_review'
+        )";
+
+        $stmt = $pdo->prepare($sql);
+
+$stmt->execute([
+    ":user_id" => $review["user_id"],
+    ":sender_id" => $userId,
+    ":review_id" => $reviewId
+]);
     }
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Voltar para o jogo
-    |--------------------------------------------------------------------------
-    */
+     * Voltar para o jogo
+     */
 
     $sql = "SELECT games.rawg_id
             FROM reviews
@@ -178,6 +197,10 @@ if ($activityId) {
     $activityId = (int) $activityId;
 
 
+    /*
+     * Procurar atividade
+     */
+
     $sql = "SELECT
                 id,
                 user_id
@@ -198,10 +221,8 @@ if ($activityId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Não permitir like na própria atividade
-    |--------------------------------------------------------------------------
-    */
+     * Não permitir like na própria atividade
+     */
 
     if ((int) $activity["user_id"] === $userId) {
         die("Não podes dar like na tua própria atividade.");
@@ -209,10 +230,8 @@ if ($activityId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Verificar se já existe like
-    |--------------------------------------------------------------------------
-    */
+     * Verificar se já existe like
+     */
 
     $sql = "SELECT id
             FROM likes
@@ -230,10 +249,8 @@ if ($activityId) {
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Remover like
-    |--------------------------------------------------------------------------
-    */
+     * Remover like
+     */
 
     if ($like) {
 
@@ -248,15 +265,12 @@ if ($activityId) {
             ":activity_id" => $activityId
         ]);
 
-    }
 
     /*
-    |--------------------------------------------------------------------------
-    | Adicionar like
-    |--------------------------------------------------------------------------
-    */
+     * Adicionar like
+     */
 
-    else {
+    } else {
 
         $sql = "INSERT INTO likes (
                     user_id,
@@ -273,14 +287,38 @@ if ($activityId) {
             ":user_id" => $userId,
             ":activity_id" => $activityId
         ]);
+
+
+        /*
+         * Criar notificação
+         */
+
+$sql = "INSERT INTO notifications (
+            user_id,
+            sender_id,
+            activity_id,
+            type
+        )
+        VALUES (
+            :user_id,
+            :sender_id,
+            :activity_id,
+            'like_activity'
+        )";
+
+        $stmt = $pdo->prepare($sql);
+
+$stmt->execute([
+    ":user_id" => $activity["user_id"],
+    ":sender_id" => $userId,
+    ":activity_id" => $activityId
+]);
     }
 
 
     /*
-    |--------------------------------------------------------------------------
-    | Voltar para atividade
-    |--------------------------------------------------------------------------
-    */
+     * Voltar para atividade
+     */
 
     header("Location: activity.php");
 

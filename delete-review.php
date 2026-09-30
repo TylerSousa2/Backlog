@@ -1,28 +1,34 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
 
-$reviewId = $_GET["id"] ?? null;
+verifyCsrfToken();
 
-if (!$reviewId) {
+$userId = currentUserId();
+
+$reviewId = $_POST["review_id"] ?? null;
+
+if (
+    !$reviewId ||
+    !filter_var($reviewId, FILTER_VALIDATE_INT)
+) {
     die("Review inválida.");
 }
 
+$reviewId = (int) $reviewId;
+
 
 /*
- * Procurar o jogo associado à review
- */
+|--------------------------------------------------------------------------
+| Procurar o jogo associado à review
+|--------------------------------------------------------------------------
+*/
 
-$sql = "SELECT games.rawg_id
+$sql = "SELECT
+            games.rawg_id
 
         FROM reviews
 
@@ -48,8 +54,10 @@ if (!$review) {
 
 
 /*
- * Apagar review
- */
+|--------------------------------------------------------------------------
+| Apagar review
+|--------------------------------------------------------------------------
+*/
 
 $sql = "DELETE FROM reviews
 
@@ -65,13 +73,13 @@ $stmt->execute([
 
 
 /*
- * Voltar para o jogo
- */
+|--------------------------------------------------------------------------
+| Voltar para o jogo
+|--------------------------------------------------------------------------
+*/
 
 header(
     "Location: game.php?id=" . $review["rawg_id"]
 );
 
 exit;
-
-?>

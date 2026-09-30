@@ -1,6 +1,6 @@
 <?php
 
-require_once "includes/auth.php";
+require_once "includes/csrf.php";
 require_once "includes/db.php";
 
 requireLogin();
@@ -55,6 +55,54 @@ $stmt->execute([
 
 $activities = $stmt->fetchAll();
 
+/*
+ * Likes das atividades
+ */
+
+$activityLikes = [];
+$userActivityLikes = [];
+
+if (!empty($activities)) {
+
+    foreach ($activities as $activity) {
+
+        $sql = "SELECT COUNT(*)
+                FROM likes
+                WHERE activity_id = :activity_id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ":activity_id" => $activity["id"]
+        ]);
+
+        $activityLikes[
+            $activity["id"]
+        ] = $stmt->fetchColumn();
+
+
+        /*
+         * Verificar se o utilizador atual
+         * deu like
+         */
+
+        $sql = "SELECT id
+                FROM likes
+                WHERE activity_id = :activity_id
+                AND user_id = :user_id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ":activity_id" => $activity["id"],
+            ":user_id" => $userId
+        ]);
+
+        $userActivityLikes[
+            $activity["id"]
+        ] = (bool) $stmt->fetch();
+    }
+}
 
 /*
  * Procurar Top 3 atual das pessoas
@@ -342,7 +390,77 @@ require_once "includes/header.php";
 
             <?php } ?>
 
+            <!-- Like -->
 
+<?php if ($activity["user_id"] != $userId) { ?>
+
+    <form method="POST" action="like.php">
+
+        <?php echo csrfField(); ?>
+
+        <input
+            type="hidden"
+            name="activity_id"
+            value="<?php echo $activity["id"]; ?>"
+        >
+
+        <button type="submit">
+
+            <?php
+            echo $userActivityLikes[$activity["id"]]
+                ? "❤️"
+                : "🤍";
+            ?>
+
+            <?php echo $activityLikes[$activity["id"]]; ?>
+
+        </button>
+
+    </form>
+
+<?php } else { ?>
+
+    <p>
+        ❤️ <?php echo $activityLikes[$activity["id"]]; ?>
+    </p>
+
+    <!-- Like -->
+
+<?php if ($activity["user_id"] != $userId) { ?>
+
+    <form method="POST" action="like.php">
+
+        <?php echo csrfField(); ?>
+
+        <input
+            type="hidden"
+            name="activity_id"
+            value="<?php echo $activity["id"]; ?>"
+        >
+
+        <button type="submit">
+
+            <?php
+            echo $userActivityLikes[$activity["id"]]
+                ? "❤️"
+                : "🤍";
+            ?>
+
+            <?php echo $activityLikes[$activity["id"]]; ?>
+
+        </button>
+
+    </form>
+
+<?php } else { ?>
+
+    <p>
+        ❤️ <?php echo $activityLikes[$activity["id"]]; ?>
+    </p>
+
+<?php } ?>
+
+<?php } ?>
             <!-- Data -->
 
             <p>

@@ -1,34 +1,67 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/auth.php";
 require_once "includes/db.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
+
+$userId = currentUserId();
 
 
 /*
- * Procurar notificações
- */
+|--------------------------------------------------------------------------
+| Marcar notificações como lidas
+|--------------------------------------------------------------------------
+*/
+
+$sql = "UPDATE notifications
+        SET is_read = 1
+        WHERE user_id = :user_id
+        AND is_read = 0";
+
+$stmt = $pdo->prepare($sql);
+
+$stmt->execute([
+    ":user_id" => $userId
+]);
+
+
+/*
+|--------------------------------------------------------------------------
+| Procurar notificações
+|--------------------------------------------------------------------------
+*/
 
 $sql = "SELECT
             notifications.id,
             notifications.type,
-            notifications.is_read,
             notifications.created_at,
 
             users.id AS sender_id,
-            users.username AS sender_username
+            users.username,
+
+            reviews.id AS review_id,
+            activities.id AS activity_id,
+
+            games.rawg_id,
+            games.title
 
         FROM notifications
 
         INNER JOIN users
             ON notifications.sender_id = users.id
+
+        LEFT JOIN reviews
+            ON notifications.review_id = reviews.id
+
+        LEFT JOIN activities
+            ON notifications.activity_id = activities.id
+
+        LEFT JOIN games
+            ON games.id = COALESCE(
+                reviews.game_id,
+                activities.game_id
+            )
 
         WHERE notifications.user_id = :user_id
 
@@ -41,22 +74,6 @@ $stmt->execute([
 ]);
 
 $notifications = $stmt->fetchAll();
-
-
-/*
- * Marcar notificações como lidas
- */
-
-$sql = "UPDATE notifications
-        SET is_read = 1
-        WHERE user_id = :user_id
-        AND is_read = 0";
-
-$stmt = $pdo->prepare($sql);
-
-$stmt->execute([
-    ":user_id" => $userId
-]);
 
 
 $pageTitle = "Notificações - GameBacklog";
@@ -80,6 +97,7 @@ require_once "includes/header.php";
 
         <div>
 
+
             <?php if ($notification["type"] === "follow") { ?>
 
                 <p>
@@ -89,9 +107,7 @@ require_once "includes/header.php";
                     >
 
                         <strong>
-                            <?php echo htmlspecialchars(
-                                $notification["sender_username"]
-                            ); ?>
+                            <?php echo htmlspecialchars($notification["username"]); ?>
                         </strong>
 
                     </a>
@@ -99,6 +115,69 @@ require_once "includes/header.php";
                     começou a seguir-te.
 
                 </p>
+
+
+            <?php } elseif ($notification["type"] === "like_review") { ?>
+
+                <p>
+
+                    <a
+                        href="profile.php?id=<?php echo $notification["sender_id"]; ?>"
+                    >
+
+                        <strong>
+                            <?php echo htmlspecialchars($notification["username"]); ?>
+                        </strong>
+
+                    </a>
+
+                    gostou da tua review de
+
+                    <a
+                        href="game.php?id=<?php echo $notification["rawg_id"]; ?>"
+                    >
+
+                        <strong>
+                            <?php echo htmlspecialchars($notification["title"]); ?>
+                        </strong>
+
+                    </a>.
+
+                </p>
+
+
+<?php } elseif ($notification["type"] === "like_activity") { ?>
+
+    <p>
+
+        <a
+            href="profile.php?id=<?php echo $notification["sender_id"]; ?>"
+        >
+
+            <strong>
+                <?php echo htmlspecialchars($notification["username"]); ?>
+            </strong>
+
+        </a>
+
+        gostou da tua atividade
+        <?php if (!empty($notification["title"])) { ?>
+
+            de
+
+            <a
+                href="game.php?id=<?php echo $notification["rawg_id"]; ?>"
+            >
+
+                <strong>
+                    <?php echo htmlspecialchars($notification["title"]); ?>
+                </strong>
+
+            </a>
+
+        <?php } ?>.
+
+    </p>
 
             <?php } ?>
 

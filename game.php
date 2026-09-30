@@ -873,37 +873,37 @@ require_once "includes/header.php";
 
             <?php if (isset($_SESSION["user_id"])) { ?>
 
-    <?php if ($review["user_id"] != $_SESSION["user_id"]) { ?>
+                <?php if ($review["user_id"] != $_SESSION["user_id"]) { ?>
 
-    <form method="POST" action="like.php">
+                    <form method="POST" action="like.php">
 
-        <?php echo csrfField(); ?>
+                        <?php echo csrfField(); ?>
 
-        <input
-            type="hidden"
-            name="review_id"
-            value="<?php echo $review["id"]; ?>"
-        >
+                        <input
+                            type="hidden"
+                            name="review_id"
+                            value="<?php echo $review["id"]; ?>"
+                        >
 
-            <button type="submit">
+                        <button type="submit">
 
-                <?php
-                echo $userReviewLikes[$review["id"]]
-                    ? "❤️"
-                    : "🤍";
-                ?>
+                            <?php
+                            echo $userReviewLikes[$review["id"]]
+                                ? "❤️"
+                                : "🤍";
+                            ?>
 
-                <?php echo $reviewLikes[$review["id"]]; ?>
+                            <?php echo $reviewLikes[$review["id"]]; ?>
 
-            </button>
+                        </button>
 
-        </form>
+                    </form>
 
-            <?php } else { ?>
+                <?php } else { ?>
 
-                <p>
-                    ❤️ <?php echo $reviewLikes[$review["id"]]; ?>
-                </p>
+                    <p>
+                        ❤️ <?php echo $reviewLikes[$review["id"]]; ?>
+                    </p>
 
                 <?php } ?>
 
@@ -928,16 +928,27 @@ require_once "includes/header.php";
                         Editar
                     </a>
 
-                    |
-
-                    <a
-                        href="delete-review.php?id=<?php echo $review["id"]; ?>"
-                        onclick="return confirm('Tens a certeza que queres apagar esta review?');"
-                    >
-                        Apagar
-                    </a>
-
                 </p>
+
+                <form
+                    method="POST"
+                    action="delete-review.php"
+                    onsubmit="return confirm('Tens a certeza que queres apagar esta review?');"
+                >
+
+                    <?php echo csrfField(); ?>
+
+                    <input
+                        type="hidden"
+                        name="review_id"
+                        value="<?php echo $review["id"]; ?>"
+                    >
+
+                    <button type="submit">
+                        Apagar
+                    </button>
+
+                </form>
 
             <?php } ?>
 
