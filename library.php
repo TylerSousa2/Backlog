@@ -1,15 +1,12 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
+
+$userId = currentUserId();
 
 $statusFilter = $_GET["status"] ?? "all";
 
@@ -22,14 +19,18 @@ $allowedFilters = [
     "favorite"
 ];
 
-if (!in_array($statusFilter, $allowedFilters)) {
+if (!in_array($statusFilter, $allowedFilters, true)) {
     $statusFilter = "all";
 }
 
+$statusLabels = getGameStatusLabels();
+
 
 /*
- * Buscar jogos da biblioteca
- */
+|--------------------------------------------------------------------------
+| Obter jogos da biblioteca
+|--------------------------------------------------------------------------
+*/
 
 $sql = "SELECT
             games.id,
@@ -37,36 +38,48 @@ $sql = "SELECT
             games.title,
             games.cover,
             games.release_date,
+            games.genre,
+            games.platform,
             user_games.status,
             user_games.rating,
             user_games.hours_played,
             user_games.favorite,
             user_games.started_at,
-            user_games.finished_at
-        FROM user_games
-        INNER JOIN games
-            ON user_games.game_id = games.id
-        WHERE user_games.user_id = :user_id";
+            user_games.finished_at,
+            user_games.created_at
 
+        FROM user_games
+
+        INNER JOIN games
+            ON games.id = user_games.game_id
+
+        WHERE user_games.user_id = :user_id";
 
 $params = [
     ":user_id" => $userId
 ];
 
 
-if ($statusFilter !== "all" && $statusFilter !== "favorite") {
+if (
+    in_array(
+        $statusFilter,
+        [
+            "planned",
+            "playing",
+            "completed",
+            "dropped"
+        ],
+        true
+    )
+) {
 
     $sql .= " AND user_games.status = :status";
 
     $params[":status"] = $statusFilter;
 
-}
-
-
-if ($statusFilter === "favorite") {
+} elseif ($statusFilter === "favorite") {
 
     $sql .= " AND user_games.favorite = 1";
-
 }
 
 
@@ -80,132 +93,154 @@ $stmt->execute($params);
 $games = $stmt->fetchAll();
 
 
-/*
- * Título da página
- */
-
-$pageTitle = "Minha Biblioteca - GameBacklog";
+$pageTitle = "Biblioteca - GameBacklog";
 
 require_once "includes/header.php";
 
 ?>
 
+<h1>
+    A minha biblioteca
+</h1>
 
-<h1>Minha Biblioteca</h1>
 
+<nav>
 
-<div>
-
-    <a href="library.php">
+    <a href="library.php?status=all">
         Todos
     </a>
+
+    |
 
     <a href="library.php?status=planned">
         Planeados
     </a>
 
+    |
+
     <a href="library.php?status=playing">
         A jogar
     </a>
 
+    |
+
     <a href="library.php?status=completed">
-        Concluídos
+        Completados
     </a>
+
+    |
 
     <a href="library.php?status=dropped">
         Abandonados
     </a>
 
+    |
+
     <a href="library.php?status=favorite">
-        ❤️ Favoritos
+        Favoritos
     </a>
 
-</div>
+</nav>
 
 
 <hr>
 
 
-<p>
-    Olá, <?php echo htmlspecialchars($_SESSION["username"]); ?>!
-</p>
-
-
 <?php if (empty($games)) { ?>
 
     <p>
-        Ainda não tens jogos nesta categoria.
+        Não tens jogos nesta categoria.
     </p>
 
 <?php } else { ?>
 
-
     <?php foreach ($games as $game) { ?>
+
+        <?php
+
+        $gameDbId = (int) $game["id"];
+        $rawgId = (int) $game["rawg_id"];
+
+        $gameStatus = $game["status"];
+
+        $rating = (string) (
+            $game["rating"] ?? ""
+        );
+
+        $hoursPlayed = (string) (
+            $game["hours_played"] ?? 0
+        );
+
+        $startedAt = (string) (
+            $game["started_at"] ?? ""
+        );
+
+        $finishedAt = (string) (
+            $game["finished_at"] ?? ""
+        );
+
+        $favorite = (int) $game["favorite"] === 1;
+
+        ?>
+
 
         <div>
 
-            <?php if (!empty($game["cover"])) { ?>
+            <a href="game.php?id=<?php echo $rawgId; ?>">
 
-                <img
-                    src="<?php echo htmlspecialchars($game["cover"]); ?>"
-                    width="200"
-                    alt="<?php echo htmlspecialchars($game["title"]); ?>"
-                >
+                <?php if (!empty($game["cover"])) { ?>
 
-            <?php } ?>
+                    <img src="<?php echo e($game["cover"]); ?>" width="150" alt="<?php echo e($game["title"]); ?>">
+
+                <?php } ?>
 
 
-            <h2>
-                <?php echo htmlspecialchars($game["title"]); ?>
-            </h2>
+                <h2>
+                    <?php echo e($game["title"]); ?>
+                </h2>
+
+            </a>
+
+
+            <p>
+
+                <strong>
+                    Estado:
+                </strong>
+
+                <?php echo e(
+                    $statusLabels[$gameStatus]
+                    ?? $gameStatus
+                ); ?>
+
+            </p>
 
 
             <form method="POST" action="update-game.php">
 
-                <input
-                    type="hidden"
-                    name="game_id"
-                    value="<?php echo $game["id"]; ?>"
-                >
+                <?php echo csrfField(); ?>
 
 
-                <label for="status-<?php echo $game["id"]; ?>">
+                <input type="hidden" name="game_id" value="<?php echo $gameDbId; ?>">
+
+
+                <label for="status_<?php echo $gameDbId; ?>">
                     Estado:
                 </label>
 
+                <select id="status_<?php echo $gameDbId; ?>" name="status">
 
-                <select
-                    id="status-<?php echo $game["id"]; ?>"
-                    name="status"
-                >
+                    <?php foreach (
+                        $statusLabels as $status => $label
+                    ) { ?>
 
-                    <option
-                        value="planned"
-                        <?php echo $game["status"] === "planned" ? "selected" : ""; ?>
-                    >
-                        Planeado
-                    </option>
+                        <option value="<?php echo e($status); ?>" <?php echo $gameStatus === $status
+                               ? "selected"
+                               : ""; ?>>
+                            <?php echo e($label); ?>
+                        </option>
 
-                    <option
-                        value="playing"
-                        <?php echo $game["status"] === "playing" ? "selected" : ""; ?>
-                    >
-                        A jogar
-                    </option>
-
-                    <option
-                        value="completed"
-                        <?php echo $game["status"] === "completed" ? "selected" : ""; ?>
-                    >
-                        Concluído
-                    </option>
-
-                    <option
-                        value="dropped"
-                        <?php echo $game["status"] === "dropped" ? "selected" : ""; ?>
-                    >
-                        Abandonado
-                    </option>
+                    <?php } ?>
 
                 </select>
 
@@ -213,71 +248,44 @@ require_once "includes/header.php";
                 <br><br>
 
 
-                <label for="rating-<?php echo $game["id"]; ?>">
+                <label for="rating_<?php echo $gameDbId; ?>">
                     Rating:
                 </label>
 
-
-                <input
-                    type="number"
-                    id="rating-<?php echo $game["id"]; ?>"
-                    name="rating"
-                    min="0"
-                    max="10"
-                    step="0.5"
-                    value="<?php echo $game["rating"] ?? ""; ?>"
-                    placeholder="0 - 10"
-                >
+                <input type="number" id="rating_<?php echo $gameDbId; ?>" name="rating" min="0" max="10" step="0.5"
+                    value="<?php echo e($rating); ?>">
 
 
                 <br><br>
 
 
-                <label for="hours-<?php echo $game["id"]; ?>">
+                <label for="hours_<?php echo $gameDbId; ?>">
                     Horas jogadas:
                 </label>
 
-
-                <input
-                    type="number"
-                    id="hours-<?php echo $game["id"]; ?>"
-                    name="hours_played"
-                    min="0"
-                    step="0.5"
-                    value="<?php echo $game["hours_played"]; ?>"
-                >
+                <input type="number" id="hours_<?php echo $gameDbId; ?>" name="hours_played" min="0" step="0.1"
+                    value="<?php echo e($hoursPlayed); ?>">
 
 
                 <br><br>
 
 
-                <label for="started-<?php echo $game["id"]; ?>">
+                <label for="started_<?php echo $gameDbId; ?>">
                     Data de início:
                 </label>
 
-
-                <input
-                    type="date"
-                    id="started-<?php echo $game["id"]; ?>"
-                    name="started_at"
-                    value="<?php echo $game["started_at"] ?? ""; ?>"
-                >
+                <input type="date" id="started_<?php echo $gameDbId; ?>" name="started_at" value="<?php echo e($startedAt); ?>">
 
 
                 <br><br>
 
 
-                <label for="finished-<?php echo $game["id"]; ?>">
+                <label for="finished_<?php echo $gameDbId; ?>">
                     Data de conclusão:
                 </label>
 
-
-                <input
-                    type="date"
-                    id="finished-<?php echo $game["id"]; ?>"
-                    name="finished_at"
-                    value="<?php echo $game["finished_at"] ?? ""; ?>"
-                >
+                <input type="date" id="finished_<?php echo $gameDbId; ?>" name="finished_at"
+                    value="<?php echo e($finishedAt); ?>">
 
 
                 <br><br>
@@ -285,14 +293,11 @@ require_once "includes/header.php";
 
                 <label>
 
-                    <input
-                        type="checkbox"
-                        name="favorite"
-                        value="1"
-                        <?php echo $game["favorite"] ? "checked" : ""; ?>
-                    >
+                    <input type="checkbox" name="favorite" <?php echo $favorite
+                        ? "checked"
+                        : ""; ?>>
 
-                    Favorito ❤️
+                    Favorito
 
                 </label>
 
@@ -307,78 +312,11 @@ require_once "includes/header.php";
             </form>
 
 
-            <p>
-
-                <strong>Rating:</strong>
-
-                <?php
-
-                if ($game["rating"] !== null) {
-                    echo $game["rating"] . " / 10";
-                } else {
-                    echo "Sem rating";
-                }
-
-                ?>
-
-            </p>
-
-
-            <p>
-
-                <strong>Horas jogadas:</strong>
-
-                <?php echo $game["hours_played"]; ?>
-
-            </p>
-
-
-            <?php if ($game["favorite"]) { ?>
-
-                <p>
-                    ❤️ Favorito
-                </p>
-
-            <?php } ?>
-
-
-            <?php if (!empty($game["started_at"])) { ?>
-
-                <p>
-
-                    <strong>Data de início:</strong>
-
-                    <?php echo htmlspecialchars($game["started_at"]); ?>
-
-                </p>
-
-            <?php } ?>
-
-
-            <?php if (!empty($game["finished_at"])) { ?>
-
-                <p>
-
-                    <strong>Data de conclusão:</strong>
-
-                    <?php echo htmlspecialchars($game["finished_at"]); ?>
-
-                </p>
-
-            <?php } ?>
-
-
-            <a href="game.php?id=<?php echo $game["rawg_id"]; ?>">
-                Ver jogo
-            </a>
-
-
             <hr>
 
         </div>
 
     <?php } ?>
-
 
 <?php } ?>
 

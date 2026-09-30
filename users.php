@@ -1,145 +1,156 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/auth.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
-$currentUserId = $_SESSION["user_id"];
+requireLogin();
 
 $type = $_GET["type"] ?? null;
-$userId = $_GET["id"] ?? null;
 
-if (!$userId || !in_array($type, ["followers", "following"])) {
-    die("Pedido inválido.");
+if (!in_array($type, ["followers", "following"], true)) {
+    die("Tipo de utilizadores inválido.");
 }
+
+$profileUserId = validateId(
+    $_GET["id"] ?? null,
+    "Utilizador inválido."
+);
 
 
 /*
- * Procurar utilizador
- */
+|--------------------------------------------------------------------------
+| Obter utilizador
+|--------------------------------------------------------------------------
+*/
 
-$sql = "SELECT id, username
-        FROM users
-        WHERE id = :user_id";
+$profileUser = getUserById(
+    $pdo,
+    $profileUserId
+);
 
-$stmt = $pdo->prepare($sql);
-
-$stmt->execute([
-    ":user_id" => $userId
-]);
-
-$user = $stmt->fetch();
-
-if (!$user) {
+if (!$profileUser) {
     die("Utilizador não encontrado.");
 }
 
 
 /*
- * Seguidores
- */
+|--------------------------------------------------------------------------
+| Obter utilizadores
+|--------------------------------------------------------------------------
+*/
 
 if ($type === "followers") {
 
     $sql = "SELECT
                 users.id,
                 users.username
+
             FROM follows
 
             INNER JOIN users
-                ON follows.follower_id = users.id
+                ON users.id = follows.follower_id
 
             WHERE follows.following_id = :user_id
 
             ORDER BY users.username ASC";
 
-    $title = "Seguidores de " . $user["username"];
-
-}
-
-
-/*
- * A seguir
- */
-
-if ($type === "following") {
+} else {
 
     $sql = "SELECT
                 users.id,
                 users.username
+
             FROM follows
 
             INNER JOIN users
-                ON follows.following_id = users.id
+                ON users.id = follows.following_id
 
             WHERE follows.follower_id = :user_id
 
             ORDER BY users.username ASC";
-
-    $title = "A seguir " . $user["username"];
-
 }
-
 
 $stmt = $pdo->prepare($sql);
 
 $stmt->execute([
-    ":user_id" => $userId
+    ":user_id" => $profileUserId
 ]);
 
 $users = $stmt->fetchAll();
 
 
-$pageTitle = $title . " - GameBacklog";
+/*
+|--------------------------------------------------------------------------
+| Dados para apresentação
+|--------------------------------------------------------------------------
+*/
+
+$profileUsername = e(
+    $profileUser["username"]
+);
+
+$pageTitle = (
+    $type === "followers"
+    ? "Seguidores"
+    : "A seguir"
+) . " - GameBacklog";
+
 
 require_once "includes/header.php";
 
 ?>
 
 <h1>
-    <?php echo htmlspecialchars($title); ?>
+
+    <?php if ($type === "followers") { ?>
+
+        Seguidores de
+
+    <?php } else { ?>
+
+        A seguir de
+
+    <?php } ?>
+
+    <?php echo $profileUsername; ?>
+
 </h1>
 
 
 <?php if (empty($users)) { ?>
 
-    <?php if ($type === "followers") { ?>
+    <p>
 
-        <p>
+        <?php if ($type === "followers") { ?>
+
             Este utilizador ainda não tem seguidores.
-        </p>
 
-    <?php } else { ?>
+        <?php } else { ?>
 
-        <p>
             Este utilizador ainda não segue ninguém.
-        </p>
 
-    <?php } ?>
+        <?php } ?>
 
+    </p>
 
 <?php } else { ?>
 
-    <?php foreach ($users as $listedUser) { ?>
+    <?php foreach ($users as $user) { ?>
+
+        <?php
+        $userId = (int) $user["id"];
+        ?>
 
         <div>
 
-            <h2>
-                <a
-                    href="profile.php?id=<?php echo $listedUser["id"]; ?>"
-                >
-                    <?php echo htmlspecialchars($listedUser["username"]); ?>
-                </a>
-            </h2>
+            <a href="profile.php?id=<?php echo $userId; ?>">
+
+                <?php echo e($user["username"]); ?>
+
+            </a>
 
         </div>
-
-        <hr>
 
     <?php } ?>
 
@@ -148,7 +159,7 @@ require_once "includes/header.php";
 
 <p>
 
-    <a href="profile.php?id=<?php echo $user["id"]; ?>">
+    <a href="profile.php?id=<?php echo $profileUserId; ?>">
         Voltar ao perfil
     </a>
 

@@ -2,14 +2,33 @@
 
 require_once "includes/csrf.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
 requireLogin();
 
 $userId = currentUserId();
 
+
 /*
- * Procurar atividades das pessoas que seguimos
- */
+|--------------------------------------------------------------------------
+| Textos das atividades
+|--------------------------------------------------------------------------
+*/
+
+$activityLabels = [
+    "added_game" => "adicionou um jogo à biblioteca",
+    "completed_game" => "concluiu",
+    "favorite_game" => "adicionou aos favoritos",
+    "review" => "publicou uma review de",
+    "top_games" => "atualizou o seu Top 3"
+];
+
+
+/*
+|--------------------------------------------------------------------------
+| Procurar atividades das pessoas que seguimos
+|--------------------------------------------------------------------------
+*/
 
 $sql = "SELECT
             activities.id,
@@ -55,61 +74,135 @@ $stmt->execute([
 
 $activities = $stmt->fetchAll();
 
+
 /*
- * Likes das atividades
- */
+|--------------------------------------------------------------------------
+| Likes das atividades
+|--------------------------------------------------------------------------
+*/
 
 $activityLikes = [];
 $userActivityLikes = [];
 
 if (!empty($activities)) {
 
+    $activityIds = [];
+
     foreach ($activities as $activity) {
 
-        $sql = "SELECT COUNT(*)
-                FROM likes
-                WHERE activity_id = :activity_id";
+        $activityId = validateId(
+            $activity["id"],
+            "Atividade inválida."
+        );
 
-        $stmt = $pdo->prepare($sql);
+        $activityIds[] = $activityId;
+    }
 
-        $stmt->execute([
-            ":activity_id" => $activity["id"]
-        ]);
-
-        $activityLikes[
-            $activity["id"]
-        ] = $stmt->fetchColumn();
+    $activityIds = array_values(
+        array_unique($activityIds)
+    );
 
 
-        /*
-         * Verificar se o utilizador atual
-         * deu like
-         */
+    /*
+     * Criar placeholders para o IN
+     */
 
-        $sql = "SELECT id
-                FROM likes
-                WHERE activity_id = :activity_id
-                AND user_id = :user_id";
+    $placeholders = [];
 
-        $stmt = $pdo->prepare($sql);
+    foreach ($activityIds as $index => $activityId) {
 
-        $stmt->execute([
-            ":activity_id" => $activity["id"],
-            ":user_id" => $userId
-        ]);
+        $placeholders[] = ":activity_" . $index;
+    }
 
-        $userActivityLikes[
-            $activity["id"]
-        ] = (bool) $stmt->fetch();
+    $inClause = implode(", ", $placeholders);
+
+
+    /*
+     * Contar todos os likes de uma vez
+     */
+
+    $sql = "SELECT
+                activity_id,
+                COUNT(*) AS total_likes
+
+            FROM likes
+
+            WHERE activity_id IN ($inClause)
+
+            GROUP BY activity_id";
+
+    $stmt = $pdo->prepare($sql);
+
+    foreach ($activityIds as $index => $activityId) {
+
+        $stmt->bindValue(
+            ":activity_" . $index,
+            $activityId,
+            PDO::PARAM_INT
+        );
+    }
+
+    $stmt->execute();
+
+    foreach ($stmt->fetchAll() as $like) {
+
+        $activityId = (int) $like["activity_id"];
+
+        $activityLikes[$activityId] =
+            (int) $like["total_likes"];
+    }
+
+
+    /*
+     * Verificar quais atividades receberam
+     * like do utilizador atual
+     */
+
+    $sql = "SELECT activity_id
+
+            FROM likes
+
+            WHERE activity_id IN ($inClause)
+
+            AND user_id = :user_id";
+
+    $stmt = $pdo->prepare($sql);
+
+    foreach ($activityIds as $index => $activityId) {
+
+        $stmt->bindValue(
+            ":activity_" . $index,
+            $activityId,
+            PDO::PARAM_INT
+        );
+    }
+
+    $stmt->bindValue(
+        ":user_id",
+        $userId,
+        PDO::PARAM_INT
+    );
+
+    $stmt->execute();
+
+    foreach ($stmt->fetchAll() as $like) {
+
+        $activityId = (int) $like["activity_id"];
+
+        $userActivityLikes[$activityId] = true;
     }
 }
 
+
 /*
- * Procurar Top 3 atual das pessoas
- * que têm atividades top_games
- */
+|--------------------------------------------------------------------------
+| Procurar Top 3 das pessoas com atividades top_games
+|--------------------------------------------------------------------------
+*/
 
 $topGamesByUser = [];
+
+$topGameUserIds = [];
 
 foreach ($activities as $activity) {
 
@@ -117,13 +210,31 @@ foreach ($activities as $activity) {
         continue;
     }
 
+    $topGameUserIds[] = validateId(
+        $activity["user_id"],
+        "Utilizador inválido."
+    );
+}
 
-    if (isset($topGamesByUser[$activity["user_id"]])) {
-        continue;
+$topGameUserIds = array_values(
+    array_unique($topGameUserIds)
+);
+
+
+if (!empty($topGameUserIds)) {
+
+    $placeholders = [];
+
+    foreach ($topGameUserIds as $index => $topUserId) {
+
+        $placeholders[] = ":top_user_" . $index;
     }
+
+    $inClause = implode(", ", $placeholders);
 
 
     $sql = "SELECT
+                user_top_games.user_id,
                 user_top_games.position,
                 games.rawg_id,
                 games.title,
@@ -134,17 +245,35 @@ foreach ($activities as $activity) {
             INNER JOIN games
                 ON user_top_games.game_id = games.id
 
-            WHERE user_top_games.user_id = :user_id
+            WHERE user_top_games.user_id IN ($inClause)
 
-            ORDER BY user_top_games.position ASC";
+            ORDER BY
+                user_top_games.user_id ASC,
+                user_top_games.position ASC";
 
     $stmt = $pdo->prepare($sql);
 
-    $stmt->execute([
-        ":user_id" => $activity["user_id"]
-    ]);
+    foreach ($topGameUserIds as $index => $topUserId) {
 
-    $topGamesByUser[$activity["user_id"]] = $stmt->fetchAll();
+        $stmt->bindValue(
+            ":top_user_" . $index,
+            $topUserId,
+            PDO::PARAM_INT
+        );
+    }
+
+    $stmt->execute();
+
+    foreach ($stmt->fetchAll() as $topGame) {
+
+        $topUserId = (int) $topGame["user_id"];
+
+        if (!isset($topGamesByUser[$topUserId])) {
+            $topGamesByUser[$topUserId] = [];
+        }
+
+        $topGamesByUser[$topUserId][] = $topGame;
+    }
 }
 
 
@@ -154,7 +283,9 @@ require_once "includes/header.php";
 
 ?>
 
-<h1>Atividade</h1>
+<h1>
+    Atividade
+</h1>
 
 
 <?php if (empty($activities)) { ?>
@@ -174,6 +305,19 @@ require_once "includes/header.php";
 
     <?php foreach ($activities as $activity) { ?>
 
+        <?php
+
+        $activityId = (int) $activity["id"];
+        $activityUserId = (int) $activity["user_id"];
+
+        $activityType = $activity["type"];
+
+        $likeCount = $activityLikes[$activityId] ?? 0;
+        $userLiked = $userActivityLikes[$activityId] ?? false;
+
+        ?>
+
+
         <div>
 
 
@@ -181,54 +325,30 @@ require_once "includes/header.php";
 
             <p>
 
-                <a
-                    href="profile.php?id=<?php echo $activity["user_id"]; ?>"
-                >
+                <a href="profile.php?id=<?php echo $activityUserId; ?>">
 
                     <strong>
-                        <?php echo htmlspecialchars($activity["username"]); ?>
+                        <?php echo e($activity["username"]); ?>
                     </strong>
 
                 </a>
 
 
-                <?php if ($activity["type"] === "added_game") { ?>
-
-                    adicionou um jogo à biblioteca
-
-
-                <?php } elseif ($activity["type"] === "completed_game") { ?>
-
-                    concluiu
-
-
-                <?php } elseif ($activity["type"] === "favorite_game") { ?>
-
-                    adicionou aos favoritos
-
-
-                <?php } elseif ($activity["type"] === "review") { ?>
-
-                    publicou uma review de
-
-
-                <?php } elseif ($activity["type"] === "top_games") { ?>
-
-                    atualizou o seu Top 3
-
-                <?php } ?>
+                <?php echo e(
+                    $activityLabels[$activityType] ?? ""
+                ); ?>
 
             </p>
 
 
-            <?php if ($activity["type"] === "top_games") { ?>
+            <?php if ($activityType === "top_games") { ?>
 
 
                 <!-- Top 3 -->
 
                 <?php
                 $topGames = $topGamesByUser[
-                    $activity["user_id"]
+                    $activityUserId
                 ] ?? [];
                 ?>
 
@@ -244,17 +364,28 @@ require_once "includes/header.php";
 
                     <?php foreach ($topGames as $topGame) { ?>
 
+                        <?php
+
+                        $topGamePosition =
+                            (int) $topGame["position"];
+
+                        $topGameRawgId =
+                            (int) $topGame["rawg_id"];
+
+                        ?>
+
+
                         <div>
 
                             <p>
 
                                 <?php
 
-                                if ($topGame["position"] == 1) {
+                                if ($topGamePosition === 1) {
 
                                     echo "🥇";
 
-                                } elseif ($topGame["position"] == 2) {
+                                } elseif ($topGamePosition === 2) {
 
                                     echo "🥈";
 
@@ -271,15 +402,9 @@ require_once "includes/header.php";
 
                             <?php if (!empty($topGame["cover"])) { ?>
 
-                                <a
-                                    href="game.php?id=<?php echo $topGame["rawg_id"]; ?>"
-                                >
+                                <a href="game.php?id=<?php echo $topGameRawgId; ?>">
 
-                                    <img
-                                        src="<?php echo htmlspecialchars($topGame["cover"]); ?>"
-                                        width="120"
-                                        alt="<?php echo htmlspecialchars($topGame["title"]); ?>"
-                                    >
+                                    <img src="<?php echo e($topGame["cover"]); ?>" width="120" alt="<?php echo e($topGame["title"]); ?>">
 
                                 </a>
 
@@ -288,11 +413,9 @@ require_once "includes/header.php";
 
                             <p>
 
-                                <a
-                                    href="game.php?id=<?php echo $topGame["rawg_id"]; ?>"
-                                >
+                                <a href="game.php?id=<?php echo $topGameRawgId; ?>">
 
-                                    <?php echo htmlspecialchars($topGame["title"]); ?>
+                                    <?php echo e($topGame["title"]); ?>
 
                                 </a>
 
@@ -313,19 +436,19 @@ require_once "includes/header.php";
 
                 <?php if (!empty($activity["game_id"])) { ?>
 
+                    <?php
+                    $activityRawgId =
+                        (int) $activity["rawg_id"];
+                    ?>
+
+
                     <div>
 
                         <?php if (!empty($activity["cover"])) { ?>
 
-                            <a
-                                href="game.php?id=<?php echo $activity["rawg_id"]; ?>"
-                            >
+                            <a href="game.php?id=<?php echo $activityRawgId; ?>">
 
-                                <img
-                                    src="<?php echo htmlspecialchars($activity["cover"]); ?>"
-                                    width="150"
-                                    alt="<?php echo htmlspecialchars($activity["title"]); ?>"
-                                >
+                                <img src="<?php echo e($activity["cover"]); ?>" width="150" alt="<?php echo e($activity["title"]); ?>">
 
                             </a>
 
@@ -334,11 +457,9 @@ require_once "includes/header.php";
 
                         <h2>
 
-                            <a
-                                href="game.php?id=<?php echo $activity["rawg_id"]; ?>"
-                            >
+                            <a href="game.php?id=<?php echo $activityRawgId; ?>">
 
-                                <?php echo htmlspecialchars($activity["title"]); ?>
+                                <?php echo e($activity["title"]); ?>
 
                             </a>
 
@@ -352,15 +473,21 @@ require_once "includes/header.php";
                 <!-- Rating da review -->
 
                 <?php if (
-                    $activity["type"] === "review" &&
+                    $activityType === "review" &&
                     $activity["rating"] !== null
                 ) { ?>
 
                     <p>
 
-                        <strong>Rating:</strong>
+                        <strong>
+                            Rating:
+                        </strong>
 
-                        <?php echo $activity["rating"]; ?> / 10
+                        <?php echo e(
+                            (string) $activity["rating"]
+                        ); ?>
+
+                        / 10
 
                     </p>
 
@@ -370,19 +497,15 @@ require_once "includes/header.php";
                 <!-- Texto da review -->
 
                 <?php if (
-                    $activity["type"] === "review" &&
+                    $activityType === "review" &&
                     !empty($activity["review"])
                 ) { ?>
 
                     <p>
 
-                        <?php
-
-                        echo nl2br(
-                            htmlspecialchars($activity["review"])
-                        );
-
-                        ?>
+                        <?php echo nl2br(
+                            e($activity["review"])
+                        ); ?>
 
                     </p>
 
@@ -390,91 +513,50 @@ require_once "includes/header.php";
 
             <?php } ?>
 
+
             <!-- Like -->
 
-<?php if ($activity["user_id"] != $userId) { ?>
+            <?php if ($activityUserId !== $userId) { ?>
 
-    <form method="POST" action="like.php">
+                <form method="POST" action="like.php">
 
-        <?php echo csrfField(); ?>
+                    <?php echo csrfField(); ?>
 
-        <input
-            type="hidden"
-            name="activity_id"
-            value="<?php echo $activity["id"]; ?>"
-        >
+                    <input type="hidden" name="activity_id" value="<?php echo $activityId; ?>">
 
-        <button type="submit">
+                    <button type="submit">
 
-            <?php
-            echo $userActivityLikes[$activity["id"]]
-                ? "❤️"
-                : "🤍";
-            ?>
+                        <?php echo $userLiked
+                            ? "❤️"
+                            : "🤍"; ?>
 
-            <?php echo $activityLikes[$activity["id"]]; ?>
+                        <?php echo $likeCount; ?>
 
-        </button>
+                    </button>
 
-    </form>
+                </form>
 
-<?php } else { ?>
+            <?php } else { ?>
 
-    <p>
-        ❤️ <?php echo $activityLikes[$activity["id"]]; ?>
-    </p>
+                <p>
+                    ❤️ <?php echo $likeCount; ?>
+                </p>
 
-    <!-- Like -->
+            <?php } ?>
 
-<?php if ($activity["user_id"] != $userId) { ?>
 
-    <form method="POST" action="like.php">
-
-        <?php echo csrfField(); ?>
-
-        <input
-            type="hidden"
-            name="activity_id"
-            value="<?php echo $activity["id"]; ?>"
-        >
-
-        <button type="submit">
-
-            <?php
-            echo $userActivityLikes[$activity["id"]]
-                ? "❤️"
-                : "🤍";
-            ?>
-
-            <?php echo $activityLikes[$activity["id"]]; ?>
-
-        </button>
-
-    </form>
-
-<?php } else { ?>
-
-    <p>
-        ❤️ <?php echo $activityLikes[$activity["id"]]; ?>
-    </p>
-
-<?php } ?>
-
-<?php } ?>
             <!-- Data -->
 
             <p>
 
                 <small>
 
-                    <?php
-
-                    echo date(
-                        "d/m/Y H:i",
-                        strtotime($activity["created_at"])
-                    );
-
-                    ?>
+                    <?php echo e(
+                        date(
+                            "d/m/Y H:i",
+                            strtotime($activity["created_at"])
+                        )
+                    ); ?>
 
                 </small>
 

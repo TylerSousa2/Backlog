@@ -2,6 +2,7 @@
 
 require_once "includes/csrf.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
 requireLogin();
 
@@ -9,21 +10,15 @@ verifyCsrfToken();
 
 $userId = currentUserId();
 
-$reviewId = $_POST["review_id"] ?? null;
-
-if (
-    !$reviewId ||
-    !filter_var($reviewId, FILTER_VALIDATE_INT)
-) {
-    die("Review inválida.");
-}
-
-$reviewId = (int) $reviewId;
+$reviewId = validateId(
+    $_POST["review_id"] ?? null,
+    "Review inválida."
+);
 
 
 /*
 |--------------------------------------------------------------------------
-| Procurar o jogo associado à review
+| Procurar review
 |--------------------------------------------------------------------------
 */
 
@@ -47,7 +42,6 @@ $stmt->execute([
 
 $review = $stmt->fetch();
 
-
 if (!$review) {
     die("Review não encontrada.");
 }
@@ -60,7 +54,6 @@ if (!$review) {
 */
 
 $sql = "DELETE FROM reviews
-
         WHERE id = :review_id
         AND user_id = :user_id";
 
@@ -78,8 +71,6 @@ $stmt->execute([
 |--------------------------------------------------------------------------
 */
 
-header(
-    "Location: game.php?id=" . $review["rawg_id"]
+redirect(
+    "game.php?id=" . (int) $review["rawg_id"]
 );
-
-exit;

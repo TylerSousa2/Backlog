@@ -2,6 +2,7 @@
 
 require_once "includes/auth.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
 requireLogin();
 
@@ -39,9 +40,6 @@ $sql = "SELECT
 
             users.id AS sender_id,
             users.username,
-
-            reviews.id AS review_id,
-            activities.id AS activity_id,
 
             games.rawg_id,
             games.title
@@ -82,7 +80,9 @@ require_once "includes/header.php";
 
 ?>
 
-<h1>Notificações</h1>
+<h1>
+    Notificações
+</h1>
 
 
 <?php if (empty($notifications)) { ?>
@@ -95,19 +95,29 @@ require_once "includes/header.php";
 
     <?php foreach ($notifications as $notification) { ?>
 
+        <?php
+
+        $senderId = (int) $notification["sender_id"];
+
+        $rawgId = !empty($notification["rawg_id"])
+            ? (int) $notification["rawg_id"]
+            : null;
+
+        $type = $notification["type"];
+
+        ?>
+
+
         <div>
 
-
-            <?php if ($notification["type"] === "follow") { ?>
+            <?php if ($type === "follow") { ?>
 
                 <p>
 
-                    <a
-                        href="profile.php?id=<?php echo $notification["sender_id"]; ?>"
-                    >
+                    <a href="profile.php?id=<?php echo $senderId; ?>">
 
                         <strong>
-                            <?php echo htmlspecialchars($notification["username"]); ?>
+                            <?php echo e($notification["username"]); ?>
                         </strong>
 
                     </a>
@@ -117,67 +127,76 @@ require_once "includes/header.php";
                 </p>
 
 
-            <?php } elseif ($notification["type"] === "like_review") { ?>
+            <?php } elseif ($type === "like_review") { ?>
 
                 <p>
 
-                    <a
-                        href="profile.php?id=<?php echo $notification["sender_id"]; ?>"
-                    >
+                    <a href="profile.php?id=<?php echo $senderId; ?>">
 
                         <strong>
-                            <?php echo htmlspecialchars($notification["username"]); ?>
+                            <?php echo e($notification["username"]); ?>
                         </strong>
 
                     </a>
 
                     gostou da tua review de
 
-                    <a
-                        href="game.php?id=<?php echo $notification["rawg_id"]; ?>"
-                    >
+                    <?php if (
+                        $rawgId !== null &&
+                        !empty($notification["title"])
+                    ) { ?>
 
-                        <strong>
-                            <?php echo htmlspecialchars($notification["title"]); ?>
-                        </strong>
+                        <a href="game.php?id=<?php echo $rawgId; ?>">
 
-                    </a>.
+                            <strong>
+                                <?php echo e($notification["title"]); ?>
+                            </strong>
+
+                        </a>
+
+                    <?php } else { ?>
+
+                        um jogo.
+
+                    <?php } ?>
 
                 </p>
 
 
-<?php } elseif ($notification["type"] === "like_activity") { ?>
+            <?php } elseif ($type === "like_activity") { ?>
 
-    <p>
+                <p>
 
-        <a
-            href="profile.php?id=<?php echo $notification["sender_id"]; ?>"
-        >
+                    <a href="profile.php?id=<?php echo $senderId; ?>">
 
-            <strong>
-                <?php echo htmlspecialchars($notification["username"]); ?>
-            </strong>
+                        <strong>
+                            <?php echo e($notification["username"]); ?>
+                        </strong>
 
-        </a>
+                    </a>
 
-        gostou da tua atividade
-        <?php if (!empty($notification["title"])) { ?>
+                    gostou da tua atividade
 
-            de
+                    <?php if (
+                        $rawgId !== null &&
+                        !empty($notification["title"])
+                    ) { ?>
 
-            <a
-                href="game.php?id=<?php echo $notification["rawg_id"]; ?>"
-            >
+                        de
 
-                <strong>
-                    <?php echo htmlspecialchars($notification["title"]); ?>
-                </strong>
+                        <a href="game.php?id=<?php echo $rawgId; ?>">
 
-            </a>
+                            <strong>
+                                <?php echo e($notification["title"]); ?>
+                            </strong>
 
-        <?php } ?>.
+                        </a>
 
-    </p>
+                    <?php } ?>
+
+                    .
+
+                </p>
 
             <?php } ?>
 
@@ -185,16 +204,12 @@ require_once "includes/header.php";
             <p>
 
                 <small>
-
-                    <?php
-
-                    echo date(
-                        "d/m/Y H:i",
-                        strtotime($notification["created_at"])
-                    );
-
-                    ?>
-
+                    <?php echo e(
+                        date(
+                            "d/m/Y H:i",
+                            strtotime($notification["created_at"])
+                        )
+                    ); ?>
                 </small>
 
             </p>

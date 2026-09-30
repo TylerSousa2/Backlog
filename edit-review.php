@@ -1,39 +1,35 @@
 <?php
 
-session_start();
-
-if (!isset($_SESSION["user_id"])) {
-    header("Location: login.php");
-    exit;
-}
-
+require_once "includes/csrf.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
-$userId = $_SESSION["user_id"];
+requireLogin();
 
-$reviewId = $_GET["id"] ?? null;
+$userId = currentUserId();
 
-if (!$reviewId) {
-    die("Review inválida.");
-}
+$reviewId = validateId(
+    $_GET["id"] ?? null,
+    "Review inválida."
+);
 
 
 /*
- * Procurar a review
- */
+|--------------------------------------------------------------------------
+| Obter review
+|--------------------------------------------------------------------------
+*/
 
 $sql = "SELECT
             reviews.id,
+            reviews.game_id,
             reviews.rating,
             reviews.review,
             games.rawg_id,
             games.title
-
         FROM reviews
-
         INNER JOIN games
-            ON reviews.game_id = games.id
-
+            ON games.id = reviews.game_id
         WHERE reviews.id = :review_id
         AND reviews.user_id = :user_id";
 
@@ -46,69 +42,55 @@ $stmt->execute([
 
 $review = $stmt->fetch();
 
-
 if (!$review) {
     die("Review não encontrada.");
 }
 
 
 /*
- * Atualizar review
- */
+|--------------------------------------------------------------------------
+| Atualizar review
+|--------------------------------------------------------------------------
+*/
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
-    $rating = $_POST["rating"] ?? null;
+    verifyCsrfToken();
+
+    $rating = validateRating(
+        $_POST["rating"] ?? null
+    );
 
     $reviewText = trim(
         $_POST["review"] ?? ""
     );
 
-
-    if ($rating !== null && $rating !== "") {
-
-        $rating = (float) $rating;
-
-        if ($rating < 0 || $rating > 10) {
-            die("O rating deve estar entre 0 e 10.");
-        }
-
-    } else {
-
-        $rating = null;
-
+    if ($reviewText === "") {
+        $error = "A review não pode estar vazia.";
     }
 
+    if (!isset($error)) {
 
-    if (empty($reviewText)) {
-        die("A review não pode estar vazia.");
+        $sql = "UPDATE reviews
+                SET
+                    rating = :rating,
+                    review = :review
+                WHERE id = :review_id
+                AND user_id = :user_id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ":rating" => $rating,
+            ":review" => $reviewText,
+            ":review_id" => $reviewId,
+            ":user_id" => $userId
+        ]);
+
+        redirect(
+            "game.php?id=" . (int) $review["rawg_id"]
+        );
     }
-
-
-    $sql = "UPDATE reviews
-
-            SET
-                rating = :rating,
-                review = :review
-
-            WHERE id = :review_id
-            AND user_id = :user_id";
-
-    $stmt = $pdo->prepare($sql);
-
-    $stmt->execute([
-        ":rating" => $rating,
-        ":review" => $reviewText,
-        ":review_id" => $reviewId,
-        ":user_id" => $userId
-    ]);
-
-
-    header(
-        "Location: game.php?id=" . $review["rawg_id"]
-    );
-
-    exit;
 }
 
 
@@ -123,26 +105,28 @@ require_once "includes/header.php";
 </h1>
 
 <h2>
-    <?php echo htmlspecialchars($review["title"]); ?>
+    <?php echo e($review["title"]); ?>
 </h2>
 
+<?php if (isset($error)) { ?>
+
+    <p>
+        <?php echo e($error); ?>
+    </p>
+
+<?php } ?>
+
 <form method="POST">
+
+    <?php echo csrfField(); ?>
 
     <label for="rating">
         Rating:
     </label>
 
-    <br>
-
-    <input
-        type="number"
-        id="rating"
-        name="rating"
-        min="0"
-        max="10"
-        step="0.5"
-        value="<?php echo $review["rating"] ?? ""; ?>"
-    >
+    <input type="number" id="rating" name="rating" min="0" max="10" step="0.5" value="<?php echo e(
+        $_POST["rating"] ?? $review["rating"] ?? ""
+    ); ?>">
 
     <br><br>
 
@@ -152,13 +136,9 @@ require_once "includes/header.php";
 
     <br>
 
-    <textarea
-        id="review"
-        name="review"
-        rows="8"
-        cols="60"
-        required
-    ><?php echo htmlspecialchars($review["review"]); ?></textarea>
+    <textarea id="review" name="review" rows="8" cols="60" required><?php echo e(
+        $_POST["review"] ?? $review["review"]
+    ); ?></textarea>
 
     <br><br>
 
@@ -169,8 +149,8 @@ require_once "includes/header.php";
 </form>
 
 <p>
-    <a href="game.php?id=<?php echo $review["rawg_id"]; ?>">
-        Voltar ao jogo
+    <a href="game.php?id=<?php echo (int) $review["rawg_id"]; ?>">
+        Cancelar
     </a>
 </p>
 

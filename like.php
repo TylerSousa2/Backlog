@@ -2,6 +2,7 @@
 
 require_once "includes/csrf.php";
 require_once "includes/db.php";
+require_once "includes/functions.php";
 
 requireLogin();
 
@@ -12,9 +13,25 @@ $userId = currentUserId();
 $reviewId = $_POST["review_id"] ?? null;
 $activityId = $_POST["activity_id"] ?? null;
 
+
+/*
+|--------------------------------------------------------------------------
+| Validar tipo de like
+|--------------------------------------------------------------------------
+*/
+
 if (
-    (!$reviewId && !$activityId) ||
-    ($reviewId && $activityId)
+    ($reviewId === null || $reviewId === "") &&
+    ($activityId === null || $activityId === "")
+) {
+    die("Like inválido.");
+}
+
+if (
+    $reviewId !== null &&
+    $reviewId !== "" &&
+    $activityId !== null &&
+    $activityId !== ""
 ) {
     die("Like inválido.");
 }
@@ -26,13 +43,12 @@ if (
 |--------------------------------------------------------------------------
 */
 
-if ($reviewId) {
+if ($reviewId !== null && $reviewId !== "") {
 
-    if (!filter_var($reviewId, FILTER_VALIDATE_INT)) {
-        die("Review inválida.");
-    }
-
-    $reviewId = (int) $reviewId;
+    $reviewId = validateId(
+        $reviewId,
+        "Review inválida."
+    );
 
 
     /*
@@ -58,11 +74,14 @@ if ($reviewId) {
     }
 
 
+    $reviewUserId = (int) $review["user_id"];
+
+
     /*
      * Não permitir like na própria review
      */
 
-    if ((int) $review["user_id"] === $userId) {
+    if ($reviewUserId === $userId) {
         die("Não podes dar like na tua própria review.");
     }
 
@@ -104,58 +123,72 @@ if ($reviewId) {
         ]);
 
 
-    /*
-     * Adicionar like
-     */
+        /*
+         * Adicionar like + notificação
+         */
 
     } else {
 
-        $sql = "INSERT INTO likes (
-                    user_id,
-                    review_id
-                )
-                VALUES (
-                    :user_id,
-                    :review_id
-                )";
+        $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare($sql);
+        try {
 
-        $stmt->execute([
-            ":user_id" => $userId,
-            ":review_id" => $reviewId
-        ]);
+            $sql = "INSERT INTO likes (
+                        user_id,
+                        review_id
+                    )
+                    VALUES (
+                        :user_id,
+                        :review_id
+                    )";
+
+            $stmt = $pdo->prepare($sql);
+
+            $stmt->execute([
+                ":user_id" => $userId,
+                ":review_id" => $reviewId
+            ]);
 
 
-        /*
-         * Criar notificação
-         */
+            $sql = "INSERT INTO notifications (
+                        user_id,
+                        sender_id,
+                        review_id,
+                        type
+                    )
+                    VALUES (
+                        :user_id,
+                        :sender_id,
+                        :review_id,
+                        'like_review'
+                    )";
 
-$sql = "INSERT INTO notifications (
-            user_id,
-            sender_id,
-            review_id,
-            type
-        )
-        VALUES (
-            :user_id,
-            :sender_id,
-            :review_id,
-            'like_review'
-        )";
+            $stmt = $pdo->prepare($sql);
 
-        $stmt = $pdo->prepare($sql);
+            $stmt->execute([
+                ":user_id" => $reviewUserId,
+                ":sender_id" => $userId,
+                ":review_id" => $reviewId
+            ]);
 
-$stmt->execute([
-    ":user_id" => $review["user_id"],
-    ":sender_id" => $userId,
-    ":review_id" => $reviewId
-]);
+
+            $pdo->commit();
+
+        } catch (Throwable $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            error_log($e->getMessage());
+
+            die("Não foi possível dar like.");
+        }
     }
 
 
     /*
-     * Voltar para o jogo
+     * Procurar jogo da review
      */
 
     $sql = "SELECT games.rawg_id
@@ -174,11 +207,18 @@ $stmt->execute([
 
     $game = $stmt->fetch();
 
-    header(
-        "Location: game.php?id=" . $game["rawg_id"]
-    );
+    if (!$game) {
+        die("Jogo não encontrado.");
+    }
 
-    exit;
+
+    /*
+     * Voltar para o jogo
+     */
+
+    redirect(
+        "game.php?id=" . (int) $game["rawg_id"]
+    );
 }
 
 
@@ -188,13 +228,12 @@ $stmt->execute([
 |--------------------------------------------------------------------------
 */
 
-if ($activityId) {
+if ($activityId !== null && $activityId !== "") {
 
-    if (!filter_var($activityId, FILTER_VALIDATE_INT)) {
-        die("Atividade inválida.");
-    }
-
-    $activityId = (int) $activityId;
+    $activityId = validateId(
+        $activityId,
+        "Atividade inválida."
+    );
 
 
     /*
@@ -220,11 +259,14 @@ if ($activityId) {
     }
 
 
+    $activityUserId = (int) $activity["user_id"];
+
+
     /*
      * Não permitir like na própria atividade
      */
 
-    if ((int) $activity["user_id"] === $userId) {
+    if ($activityUserId === $userId) {
         die("Não podes dar like na tua própria atividade.");
     }
 
@@ -266,53 +308,67 @@ if ($activityId) {
         ]);
 
 
-    /*
-     * Adicionar like
-     */
+        /*
+         * Adicionar like + notificação
+         */
 
     } else {
 
-        $sql = "INSERT INTO likes (
-                    user_id,
-                    activity_id
-                )
-                VALUES (
-                    :user_id,
-                    :activity_id
-                )";
+        $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare($sql);
+        try {
 
-        $stmt->execute([
-            ":user_id" => $userId,
-            ":activity_id" => $activityId
-        ]);
+            $sql = "INSERT INTO likes (
+                        user_id,
+                        activity_id
+                    )
+                    VALUES (
+                        :user_id,
+                        :activity_id
+                    )";
+
+            $stmt = $pdo->prepare($sql);
+
+            $stmt->execute([
+                ":user_id" => $userId,
+                ":activity_id" => $activityId
+            ]);
 
 
-        /*
-         * Criar notificação
-         */
+            $sql = "INSERT INTO notifications (
+                        user_id,
+                        sender_id,
+                        activity_id,
+                        type
+                    )
+                    VALUES (
+                        :user_id,
+                        :sender_id,
+                        :activity_id,
+                        'like_activity'
+                    )";
 
-$sql = "INSERT INTO notifications (
-            user_id,
-            sender_id,
-            activity_id,
-            type
-        )
-        VALUES (
-            :user_id,
-            :sender_id,
-            :activity_id,
-            'like_activity'
-        )";
+            $stmt = $pdo->prepare($sql);
 
-        $stmt = $pdo->prepare($sql);
+            $stmt->execute([
+                ":user_id" => $activityUserId,
+                ":sender_id" => $userId,
+                ":activity_id" => $activityId
+            ]);
 
-$stmt->execute([
-    ":user_id" => $activity["user_id"],
-    ":sender_id" => $userId,
-    ":activity_id" => $activityId
-]);
+
+            $pdo->commit();
+
+        } catch (Throwable $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            error_log($e->getMessage());
+
+            die("Não foi possível dar like.");
+        }
     }
 
 
@@ -320,7 +376,5 @@ $stmt->execute([
      * Voltar para atividade
      */
 
-    header("Location: activity.php");
-
-    exit;
+    redirect("activity.php");
 }

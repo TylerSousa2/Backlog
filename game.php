@@ -3,93 +3,96 @@
 require_once "includes/csrf.php";
 require_once "includes/rawg.php";
 require_once "includes/db.php";
-
-if (isset($_GET["id"])) {
-
-    $gameId = $_GET["id"];
-
-    $url = "https://api.rawg.io/api/games/" . $gameId . "?key=" . $rawgApiKey;
-
-    $response = file_get_contents($url);
-
-    $game = json_decode($response, true);
-
-} else {
-
-    die("Nenhum jogo selecionado.");
-
-}
+require_once "includes/functions.php";
 
 
 /*
- * Verificar se o jogo está na biblioteca
- */
+|--------------------------------------------------------------------------
+| Validar ID do jogo
+|--------------------------------------------------------------------------
+*/
+
+$gameId = validateId(
+    $_GET["id"] ?? null,
+    "Jogo inválido."
+);
+
+
+/*
+|--------------------------------------------------------------------------
+| Obter jogo através da API RAWG
+|--------------------------------------------------------------------------
+*/
+
+$url = "https://api.rawg.io/api/games/" .
+    $gameId .
+    "?key=" .
+    urlencode($rawgApiKey);
+
+$response = @file_get_contents($url);
+
+if ($response === false) {
+    die("Não foi possível obter os dados do jogo.");
+}
+
+$game = json_decode($response, true);
+
+if (
+    !is_array($game) ||
+    empty($game["id"]) ||
+    !isset($game["name"])
+) {
+    die("Não foi possível obter os dados do jogo.");
+}
+
+$rawgId = (int) $game["id"];
+
+
+/*
+|--------------------------------------------------------------------------
+| Verificar se o jogo está na biblioteca
+|--------------------------------------------------------------------------
+*/
 
 $inLibrary = false;
 
-if (isset($_SESSION["user_id"])) {
+if (isLoggedIn()) {
 
-    $userId = $_SESSION["user_id"];
+    $userId = currentUserId();
 
-    $sql = "SELECT user_games.id
-            FROM user_games
-            INNER JOIN games
-                ON user_games.game_id = games.id
-            WHERE user_games.user_id = :user_id
-            AND games.rawg_id = :rawg_id";
-
-    $stmt = $pdo->prepare($sql);
-
-    $stmt->execute([
-        ":user_id" => $userId,
-        ":rawg_id" => $game["id"]
-    ]);
-
-    if ($stmt->fetch()) {
-        $inLibrary = true;
-    }
+    $inLibrary = isGameInLibrary(
+        $pdo,
+        $userId,
+        $rawgId
+    );
 }
 
 
 /*
- * Procurar review do utilizador
- */
+|--------------------------------------------------------------------------
+| Procurar review do utilizador
+|--------------------------------------------------------------------------
+*/
 
 $userReview = null;
 
-if (isset($_SESSION["user_id"])) {
+if (isLoggedIn()) {
 
-    $userId = $_SESSION["user_id"];
+    $userId = currentUserId();
 
-    $sql = "SELECT
-                reviews.id,
-                reviews.rating,
-                reviews.review,
-                reviews.created_at,
-                reviews.updated_at
-
-            FROM reviews
-
-            INNER JOIN games
-                ON reviews.game_id = games.id
-
-            WHERE reviews.user_id = :user_id
-            AND games.rawg_id = :rawg_id";
-
-    $stmt = $pdo->prepare($sql);
-
-    $stmt->execute([
-        ":user_id" => $userId,
-        ":rawg_id" => $game["id"]
-    ]);
-
-    $userReview = $stmt->fetch();
+    $userReview = getUserReview(
+        $pdo,
+        $userId,
+        $rawgId
+    );
 }
 
 
 /*
- * Buscar reviews de todos os utilizadores
- */
+|--------------------------------------------------------------------------
+| Buscar reviews de todos os utilizadores
+|--------------------------------------------------------------------------
+*/
 
 $sql = "SELECT
             reviews.id,
@@ -99,231 +102,265 @@ $sql = "SELECT
             reviews.created_at,
             reviews.updated_at,
             users.username
-
         FROM reviews
-
         INNER JOIN users
             ON reviews.user_id = users.id
-
         INNER JOIN games
             ON reviews.game_id = games.id
-
         WHERE games.rawg_id = :rawg_id
-
         ORDER BY reviews.created_at DESC";
 
 $stmt = $pdo->prepare($sql);
 
 $stmt->execute([
-    ":rawg_id" => $game["id"]
+    ":rawg_id" => $rawgId
 ]);
 
 $reviews = $stmt->fetchAll();
+
+
+/*
+|--------------------------------------------------------------------------
+| Likes das reviews
+|--------------------------------------------------------------------------
+*/
 
 $reviewLikes = [];
 $userReviewLikes = [];
 
 if (!empty($reviews)) {
 
-    foreach ($reviews as $review) {
+    $reviewIds = array_map(
+        fn($review) => (int) $review["id"],
+        $reviews
+    );
 
-        $sql = "SELECT COUNT(*)
+    $placeholders = implode(
+        ",",
+        array_fill(0, count($reviewIds), "?")
+    );
+
+
+    /*
+     * Obter número de likes de todas as reviews
+     * numa única query
+     */
+
+    $sql = "SELECT
+                review_id,
+                COUNT(*) AS total_likes
+            FROM likes
+            WHERE review_id IN ($placeholders)
+            GROUP BY review_id";
+
+    $stmt = $pdo->prepare($sql);
+
+    $stmt->execute($reviewIds);
+
+    $likeCounts = $stmt->fetchAll();
+
+
+    foreach ($likeCounts as $likeCount) {
+
+        $reviewId = (int) $likeCount["review_id"];
+
+        $reviewLikes[$reviewId] =
+            (int) $likeCount["total_likes"];
+    }
+
+
+    /*
+     * Garantir que reviews sem likes
+     * ficam com 0
+     */
+
+    foreach ($reviewIds as $reviewId) {
+
+        if (!isset($reviewLikes[$reviewId])) {
+            $reviewLikes[$reviewId] = 0;
+        }
+    }
+
+
+    /*
+     * Verificar quais reviews foram
+     * liked pelo utilizador atual
+     */
+
+    if (isLoggedIn()) {
+
+        $userId = currentUserId();
+
+        $sql = "SELECT review_id
                 FROM likes
-                WHERE review_id = :review_id";
+                WHERE user_id = ?
+                AND review_id IN ($placeholders)";
 
         $stmt = $pdo->prepare($sql);
 
         $stmt->execute([
-            ":review_id" => $review["id"]
+            $userId,
+            ...$reviewIds
         ]);
 
-        $reviewLikes[
-            $review["id"]
-        ] = $stmt->fetchColumn();
+        $likedReviews = $stmt->fetchAll();
+
+
+        foreach ($likedReviews as $likedReview) {
+
+            $reviewId = (int) $likedReview["review_id"];
+
+            $userReviewLikes[$reviewId] = true;
+        }
+    }
+
+
+    /*
+     * Garantir que todas as reviews
+     * têm um valor definido
+     */
+
+    foreach ($reviewIds as $reviewId) {
+
+        if (!isset($userReviewLikes[$reviewId])) {
+            $userReviewLikes[$reviewId] = false;
+        }
+    }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Processar POST
+|--------------------------------------------------------------------------
+*/
+
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireLogin();
+
+    verifyCsrfToken();
+
+    $userId = currentUserId();
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Guardar review
+    |--------------------------------------------------------------------------
+    */
+
+    if (isset($_POST["save_review"])) {
+
+        $rating = validateRating(
+            $_POST["rating"] ?? null
+        );
+
+        $reviewText = trim(
+            $_POST["review"] ?? ""
+        );
 
 
         /*
-         * Verificar se o utilizador atual
-         * deu like
+         * Validar texto
          */
 
-        if (isset($_SESSION["user_id"])) {
+        if ($reviewText === "") {
+            die("A review não pode estar vazia.");
+        }
 
-            $sql = "SELECT id
-                    FROM likes
-                    WHERE review_id = :review_id
+
+        /*
+         * Encontrar o jogo na nossa base de dados
+         */
+
+        $existingGame = getGameByRawgId(
+            $pdo,
+            $rawgId
+        );
+
+        if (!$existingGame) {
+            die("Este jogo ainda não está na biblioteca.");
+        }
+
+        $gameDbId = (int) $existingGame["id"];
+
+
+        /*
+         * Verificar se o utilizador tem o jogo
+         */
+
+        $sql = "SELECT id
+                FROM user_games
+                WHERE user_id = :user_id
+                AND game_id = :game_id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ":user_id" => $userId,
+            ":game_id" => $gameDbId
+        ]);
+
+        $userGame = $stmt->fetch();
+
+        if (!$userGame) {
+            die(
+                "Tens de adicionar o jogo à tua biblioteca primeiro."
+            );
+        }
+
+
+        /*
+         * Verificar se já existe uma review
+         */
+
+        $sql = "SELECT id
+                FROM reviews
+                WHERE user_id = :user_id
+                AND game_id = :game_id";
+
+        $stmt = $pdo->prepare($sql);
+
+        $stmt->execute([
+            ":user_id" => $userId,
+            ":game_id" => $gameDbId
+        ]);
+
+        $existingReview = $stmt->fetch();
+
+
+        if ($existingReview) {
+
+            /*
+             * Atualizar review existente
+             */
+
+            $sql = "UPDATE reviews
+                    SET
+                        rating = :rating,
+                        review = :review
+                    WHERE id = :id
                     AND user_id = :user_id";
 
             $stmt = $pdo->prepare($sql);
 
             $stmt->execute([
-                ":review_id" => $review["id"],
-                ":user_id" => $_SESSION["user_id"]
+                ":rating" => $rating,
+                ":review" => $reviewText,
+                ":id" => (int) $existingReview["id"],
+                ":user_id" => $userId
             ]);
-
-            $userReviewLikes[
-                $review["id"]
-            ] = (bool) $stmt->fetch();
 
         } else {
 
-            $userReviewLikes[
-                $review["id"]
-            ] = false;
-
-        }
-    }
-}
-
-/*
- * Adicionar ou remover da biblioteca
- */
-
-if ($_SERVER["REQUEST_METHOD"] === "POST") {
-
-    if (!isLoggedIn()) {
-
-        echo "Tens de iniciar sessão para adicionar jogos à tua biblioteca.";
-
-    } else {
-
-        verifyCsrfToken();
-
-        $userId = currentUserId();
-        $rawgId = $game["id"];
-
-
-        /*
-         * Guardar review
-         */
-
-        if (isset($_POST["save_review"])) {
-
-            $rating = $_POST["rating"] ?? null;
-            $reviewText = trim($_POST["review"] ?? "");
-
-
-            if ($rating !== null && $rating !== "") {
-
-                $rating = (float) $rating;
-
-                if ($rating < 0 || $rating > 10) {
-                    die("O rating deve estar entre 0 e 10.");
-                }
-
-            } else {
-
-                $rating = null;
-
-            }
-
-
-            if (empty($reviewText)) {
-
-                die("A review não pode estar vazia.");
-
-            }
-
-
             /*
-             * Encontrar o jogo na nossa base de dados
+             * Criar nova review + atividade
              */
 
-            $sql = "SELECT id
-                    FROM games
-                    WHERE rawg_id = :rawg_id";
+            $pdo->beginTransaction();
 
-            $stmt = $pdo->prepare($sql);
-
-            $stmt->execute([
-                ":rawg_id" => $game["id"]
-            ]);
-
-            $existingGame = $stmt->fetch();
-
-
-            if (!$existingGame) {
-
-                die("Este jogo ainda não está na biblioteca.");
-
-            }
-
-
-            $gameDbId = $existingGame["id"];
-
-
-            /*
-             * Verificar se o utilizador tem o jogo
-             */
-
-            $sql = "SELECT id
-                    FROM user_games
-                    WHERE user_id = :user_id
-                    AND game_id = :game_id";
-
-            $stmt = $pdo->prepare($sql);
-
-            $stmt->execute([
-                ":user_id" => $userId,
-                ":game_id" => $gameDbId
-            ]);
-
-            $userGame = $stmt->fetch();
-
-
-            if (!$userGame) {
-
-                die("Tens de adicionar o jogo à tua biblioteca primeiro.");
-
-            }
-
-
-            /*
-             * Verificar se já existe uma review
-             */
-
-            $sql = "SELECT id
-                    FROM reviews
-                    WHERE user_id = :user_id
-                    AND game_id = :game_id";
-
-            $stmt = $pdo->prepare($sql);
-
-            $stmt->execute([
-                ":user_id" => $userId,
-                ":game_id" => $gameDbId
-            ]);
-
-            $existingReview = $stmt->fetch();
-
-
-            if ($existingReview) {
-
-                /*
-                 * Atualizar review existente
-                 */
-
-                $sql = "UPDATE reviews
-                        SET
-                            rating = :rating,
-                            review = :review
-                        WHERE id = :id
-                        AND user_id = :user_id";
-
-                $stmt = $pdo->prepare($sql);
-
-                $stmt->execute([
-                    ":rating" => $rating,
-                    ":review" => $reviewText,
-                    ":id" => $existingReview["id"],
-                    ":user_id" => $userId
-                ]);
-
-            } else {
-
-                /*
-                 * Criar nova review
-                 */
+            try {
 
                 $sql = "INSERT INTO reviews (
                             user_id,
@@ -348,10 +385,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 ]);
 
 
-                /*
-                 * Registar atividade da nova review
-                 */
-
                 $sql = "INSERT INTO activities (
                             user_id,
                             game_id,
@@ -369,44 +402,61 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     ":user_id" => $userId,
                     ":game_id" => $gameDbId
                 ]);
+
+                $pdo->commit();
+
+            } catch (Throwable $e) {
+
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                error_log($e->getMessage());
+
+                die(
+                    "Não foi possível publicar a review."
+                );
             }
-
-
-            /*
-             * Atualizar rating da variável
-             */
-
-            $userReview = [
-                "rating" => $rating,
-                "review" => $reviewText
-            ];
         }
 
 
-        /*
-         * Adicionar à biblioteca
-         */
+        redirect(
+            "game.php?id=" . $rawgId
+        );
+    }
 
-        if (isset($_POST["add_to_library"])) {
 
-            $sql = "SELECT id
-                    FROM games
-                    WHERE rawg_id = :rawg_id";
+    /*
+    |--------------------------------------------------------------------------
+    | Adicionar à biblioteca
+    |--------------------------------------------------------------------------
+    */
 
-            $stmt = $pdo->prepare($sql);
+    if (isset($_POST["add_to_library"])) {
 
-            $stmt->execute([
-                ":rawg_id" => $rawgId
-            ]);
+        $pdo->beginTransaction();
 
-            $existingGame = $stmt->fetch();
+        try {
+
+            /*
+             * Verificar se o jogo já existe
+             */
+
+            $existingGame = getGameByRawgId(
+                $pdo,
+                $rawgId
+            );
 
 
             if ($existingGame) {
 
-                $gameDbId = $existingGame["id"];
+                $gameDbId = (int) $existingGame["id"];
 
             } else {
+
+                /*
+                 * Guardar jogo na nossa base de dados
+                 */
 
                 $sql = "INSERT INTO games (
                             rawg_id,
@@ -430,20 +480,20 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $stmt = $pdo->prepare($sql);
 
                 $stmt->execute([
-                    ":rawg_id" => $game["id"],
+                    ":rawg_id" => $rawgId,
                     ":title" => $game["name"],
                     ":description" => $game["description_raw"] ?? null,
                     ":cover" => $game["background_image"] ?? null,
                     ":release_date" => $game["released"] ?? null,
                     ":genre" => !empty($game["genres"])
-                        ? $game["genres"][0]["name"]
+                        ? ($game["genres"][0]["name"] ?? null)
                         : null,
                     ":platform" => !empty($game["platforms"])
-                        ? $game["platforms"][0]["platform"]["name"]
+                        ? ($game["platforms"][0]["platform"]["name"] ?? null)
                         : null
                 ]);
 
-                $gameDbId = $pdo->lastInsertId();
+                $gameDbId = (int) $pdo->lastInsertId();
             }
 
 
@@ -490,7 +540,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
 
                 /*
-                 * Registar atividade de adicionar jogo
+                 * Registar atividade
                  */
 
                 $sql = "INSERT INTO activities (
@@ -512,47 +562,63 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 ]);
             }
 
-            $inLibrary = true;
+
+            $pdo->commit();
+
+        } catch (Throwable $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            error_log($e->getMessage());
+
+            die(
+                "Não foi possível adicionar o jogo à biblioteca."
+            );
         }
 
 
-        /*
-         * Remover da biblioteca
-         */
+        redirect(
+            "game.php?id=" . $rawgId
+        );
+    }
 
-        if (isset($_POST["remove_from_library"])) {
 
-            $sql = "SELECT id
-                    FROM games
-                    WHERE rawg_id = :rawg_id";
+    /*
+    |--------------------------------------------------------------------------
+    | Remover da biblioteca
+    |--------------------------------------------------------------------------
+    */
+
+    if (isset($_POST["remove_from_library"])) {
+
+        $existingGame = getGameByRawgId(
+            $pdo,
+            $rawgId
+        );
+
+        if ($existingGame) {
+
+            $gameDbId = (int) $existingGame["id"];
+
+
+            $sql = "DELETE FROM user_games
+                    WHERE user_id = :user_id
+                    AND game_id = :game_id";
 
             $stmt = $pdo->prepare($sql);
 
             $stmt->execute([
-                ":rawg_id" => $rawgId
+                ":user_id" => $userId,
+                ":game_id" => $gameDbId
             ]);
-
-            $existingGame = $stmt->fetch();
-
-
-            if ($existingGame) {
-
-                $gameDbId = $existingGame["id"];
-
-                $sql = "DELETE FROM user_games
-                        WHERE user_id = :user_id
-                        AND game_id = :game_id";
-
-                $stmt = $pdo->prepare($sql);
-
-                $stmt->execute([
-                    ":user_id" => $userId,
-                    ":game_id" => $gameDbId
-                ]);
-            }
-
-            $inLibrary = false;
         }
+
+
+        redirect(
+            "game.php?id=" . $rawgId
+        );
     }
 }
 
@@ -564,65 +630,88 @@ require_once "includes/header.php";
 ?>
 
 <h1>
-    <?php echo htmlspecialchars($game["name"]); ?>
+    <?php echo e($game["name"]); ?>
 </h1>
+
 
 <?php if (!empty($game["background_image"])) { ?>
 
-    <img
-        src="<?php echo htmlspecialchars($game["background_image"]); ?>"
-        width="400"
-        alt="<?php echo htmlspecialchars($game["name"]); ?>"
-    >
+    <img src="<?php echo e($game["background_image"]); ?>" width="400" alt="<?php echo e($game["name"]); ?>">
 
 <?php } ?>
 
 
-<h2>Descrição</h2>
+<h2>
+    Descrição
+</h2>
 
 <p>
-    <?php echo $game["description_raw"] ?? "Sem descrição disponível."; ?>
+    <?php echo e(
+        $game["description_raw"] ?? "Sem descrição disponível."
+    ); ?>
 </p>
 
 
-<h2>Informações</h2>
+<h2>
+    Informações
+</h2>
 
 <p>
     <strong>Data de lançamento:</strong>
-    <?php echo $game["released"] ?? "Desconhecida"; ?>
+
+    <?php echo e(
+        $game["released"] ?? "Desconhecida"
+    ); ?>
 </p>
+
 
 <p>
     <strong>Rating:</strong>
 
     <?php
 
-    if (isset($game["rating"])) {
+    if (
+        isset($game["rating"]) &&
+        is_numeric($game["rating"])
+    ) {
 
-        echo $game["rating"] * 2 . " / 10";
+        echo e(
+            (string) ($game["rating"] * 2)
+        ) . " / 10";
 
     } else {
 
         echo "Sem rating";
-
     }
 
     ?>
 
 </p>
 
+
 <p>
     <strong>Playtime:</strong>
-    <?php echo $game["playtime"] ?? "0"; ?> horas
+
+    <?php echo e(
+        (string) ($game["playtime"] ?? 0)
+    ); ?>
+
+    horas
 </p>
+
 
 <p>
     <strong>Metacritic:</strong>
-    <?php echo $game["metacritic"] ?? "Sem pontuação"; ?>
+
+    <?php echo e(
+        (string) ($game["metacritic"] ?? "Sem pontuação")
+    ); ?>
 </p>
 
 
-<h2>Géneros</h2>
+<h2>
+    Géneros
+</h2>
 
 <?php if (!empty($game["genres"])) { ?>
 
@@ -630,9 +719,13 @@ require_once "includes/header.php";
 
         <?php foreach ($game["genres"] as $genre) { ?>
 
-            <li>
-                <?php echo htmlspecialchars($genre["name"]); ?>
-            </li>
+            <?php if (!empty($genre["name"])) { ?>
+
+                <li>
+                    <?php echo e($genre["name"]); ?>
+                </li>
+
+            <?php } ?>
 
         <?php } ?>
 
@@ -647,7 +740,9 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Plataformas</h2>
+<h2>
+    Plataformas
+</h2>
 
 <?php if (!empty($game["platforms"])) { ?>
 
@@ -655,9 +750,18 @@ require_once "includes/header.php";
 
         <?php foreach ($game["platforms"] as $platform) { ?>
 
-            <li>
-                <?php echo htmlspecialchars($platform["platform"]["name"]); ?>
-            </li>
+            <?php
+            $platformName =
+                $platform["platform"]["name"] ?? null;
+            ?>
+
+            <?php if ($platformName) { ?>
+
+                <li>
+                    <?php echo e($platformName); ?>
+                </li>
+
+            <?php } ?>
 
         <?php } ?>
 
@@ -672,15 +776,21 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Desenvolvedora</h2>
+<h2>
+    Desenvolvedora
+</h2>
 
 <?php if (!empty($game["developers"])) { ?>
 
     <?php foreach ($game["developers"] as $developer) { ?>
 
-        <p>
-            <?php echo htmlspecialchars($developer["name"]); ?>
-        </p>
+        <?php if (!empty($developer["name"])) { ?>
+
+            <p>
+                <?php echo e($developer["name"]); ?>
+            </p>
+
+        <?php } ?>
 
     <?php } ?>
 
@@ -693,15 +803,21 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Publisher</h2>
+<h2>
+    Publisher
+</h2>
 
 <?php if (!empty($game["publishers"])) { ?>
 
     <?php foreach ($game["publishers"] as $publisher) { ?>
 
-        <p>
-            <?php echo htmlspecialchars($publisher["name"]); ?>
-        </p>
+        <?php if (!empty($publisher["name"])) { ?>
+
+            <p>
+                <?php echo e($publisher["name"]); ?>
+            </p>
+
+        <?php } ?>
 
     <?php } ?>
 
@@ -714,9 +830,12 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Minha biblioteca</h2>
+<h2>
+    Minha biblioteca
+</h2>
 
-<?php if (!isset($_SESSION["user_id"])) { ?>
+
+<?php if (!isLoggedIn()) { ?>
 
     <p>
         Inicia sessão para adicionar este jogo à tua biblioteca.
@@ -728,21 +847,16 @@ require_once "includes/header.php";
 
         <?php echo csrfField(); ?>
 
+
         <?php if ($inLibrary) { ?>
 
-            <button
-                type="submit"
-                name="remove_from_library"
-            >
+            <button type="submit" name="remove_from_library">
                 Remover da minha biblioteca
             </button>
 
         <?php } else { ?>
 
-            <button
-                type="submit"
-                name="add_to_library"
-            >
+            <button type="submit" name="add_to_library">
                 Adicionar à minha biblioteca
             </button>
 
@@ -753,9 +867,12 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Minha review</h2>
+<h2>
+    Minha review
+</h2>
 
-<?php if (!isset($_SESSION["user_id"])) { ?>
+
+<?php if (!isLoggedIn()) { ?>
 
     <p>
         Inicia sessão para escrever uma review.
@@ -773,24 +890,20 @@ require_once "includes/header.php";
 
         <?php echo csrfField(); ?>
 
+
         <label for="rating">
             Rating:
         </label>
 
         <br>
 
-        <input
-            type="number"
-            id="rating"
-            name="rating"
-            min="0"
-            max="10"
-            step="0.5"
-            value="<?php echo $userReview["rating"] ?? ""; ?>"
-            placeholder="0 - 10"
-        >
+        <input type="number" id="rating" name="rating" min="0" max="10" step="0.5" value="<?php echo e(
+            (string) ($userReview["rating"] ?? "")
+        ); ?>" placeholder="0 - 10">
+
 
         <br><br>
+
 
         <label for="review">
             Review:
@@ -798,22 +911,19 @@ require_once "includes/header.php";
 
         <br>
 
-        <textarea
-            id="review"
-            name="review"
-            rows="8"
-            cols="60"
-            placeholder="Escreve a tua opinião sobre este jogo..."
-            required
-        ><?php echo htmlspecialchars($userReview["review"] ?? ""); ?></textarea>
+        <textarea id="review" name="review" rows="8" cols="60" placeholder="Escreve a tua opinião sobre este jogo..."
+            required><?php echo e(
+                $userReview["review"] ?? ""
+            ); ?></textarea>
+
 
         <br><br>
 
-        <button
-            type="submit"
-            name="save_review"
-        >
-            <?php echo $userReview ? "Atualizar review" : "Publicar review"; ?>
+
+        <button type="submit" name="save_review">
+            <?php echo $userReview
+                ? "Atualizar review"
+                : "Publicar review"; ?>
         </button>
 
     </form>
@@ -821,7 +931,10 @@ require_once "includes/header.php";
 <?php } ?>
 
 
-<h2>Reviews dos utilizadores</h2>
+<h2>
+    Reviews dos utilizadores
+</h2>
+
 
 <?php if (empty($reviews)) { ?>
 
@@ -833,24 +946,39 @@ require_once "includes/header.php";
 
     <?php foreach ($reviews as $review) { ?>
 
+        <?php $reviewId = (int) $review["id"]; ?>
+
+
         <div>
 
             <h3>
-                <?php echo htmlspecialchars($review["username"]); ?>
+                <?php echo e($review["username"]); ?>
             </h3>
+
 
             <?php if ($review["rating"] !== null) { ?>
 
                 <p>
+
                     <strong>Rating:</strong>
-                    <?php echo $review["rating"]; ?> / 10
+
+                    <?php echo e(
+                        (string) $review["rating"]
+                    ); ?>
+
+                    / 10
+
                 </p>
 
             <?php } ?>
 
+
             <p>
-                <?php echo nl2br(htmlspecialchars($review["review"])); ?>
+                <?php echo nl2br(
+                    e($review["review"])
+                ); ?>
             </p>
+
 
             <p>
 
@@ -858,42 +986,39 @@ require_once "includes/header.php";
 
                     Publicado em
 
-                    <?php
-
-                    echo date(
-                        "d/m/Y",
-                        strtotime($review["created_at"])
-                    );
-
-                    ?>
+                    <?php echo e(
+                        date(
+                            "d/m/Y",
+                            strtotime($review["created_at"])
+                        )
+                    ); ?>
 
                 </small>
 
             </p>
 
-            <?php if (isset($_SESSION["user_id"])) { ?>
 
-                <?php if ($review["user_id"] != $_SESSION["user_id"]) { ?>
+            <?php if (isLoggedIn()) { ?>
+
+                <?php if (
+                    (int) $review["user_id"] !== currentUserId()
+                ) { ?>
 
                     <form method="POST" action="like.php">
 
                         <?php echo csrfField(); ?>
 
-                        <input
-                            type="hidden"
-                            name="review_id"
-                            value="<?php echo $review["id"]; ?>"
-                        >
+
+                        <input type="hidden" name="review_id" value="<?php echo $reviewId; ?>">
+
 
                         <button type="submit">
 
-                            <?php
-                            echo $userReviewLikes[$review["id"]]
+                            <?php echo $userReviewLikes[$reviewId]
                                 ? "❤️"
-                                : "🤍";
-                            ?>
+                                : "🤍"; ?>
 
-                            <?php echo $reviewLikes[$review["id"]]; ?>
+                            <?php echo $reviewLikes[$reviewId]; ?>
 
                         </button>
 
@@ -902,7 +1027,7 @@ require_once "includes/header.php";
                 <?php } else { ?>
 
                     <p>
-                        ❤️ <?php echo $reviewLikes[$review["id"]]; ?>
+                        ❤️ <?php echo $reviewLikes[$reviewId]; ?>
                     </p>
 
                 <?php } ?>
@@ -910,39 +1035,34 @@ require_once "includes/header.php";
             <?php } else { ?>
 
                 <p>
-                    ❤️ <?php echo $reviewLikes[$review["id"]]; ?>
+                    ❤️ <?php echo $reviewLikes[$reviewId]; ?>
                 </p>
 
             <?php } ?>
 
+
             <?php if (
-                isset($_SESSION["user_id"]) &&
-                $review["user_id"] == $_SESSION["user_id"]
+                isLoggedIn() &&
+                (int) $review["user_id"] === currentUserId()
             ) { ?>
 
                 <p>
 
-                    <a
-                        href="edit-review.php?id=<?php echo $review["id"]; ?>"
-                    >
+                    <a href="edit-review.php?id=<?php echo $reviewId; ?>">
                         Editar
                     </a>
 
                 </p>
 
-                <form
-                    method="POST"
-                    action="delete-review.php"
-                    onsubmit="return confirm('Tens a certeza que queres apagar esta review?');"
-                >
+
+                <form method="POST" action="delete-review.php"
+                    onsubmit="return confirm('Tens a certeza que queres apagar esta review?');">
 
                     <?php echo csrfField(); ?>
 
-                    <input
-                        type="hidden"
-                        name="review_id"
-                        value="<?php echo $review["id"]; ?>"
-                    >
+
+                    <input type="hidden" name="review_id" value="<?php echo $reviewId; ?>">
+
 
                     <button type="submit">
                         Apagar
@@ -951,6 +1071,7 @@ require_once "includes/header.php";
                 </form>
 
             <?php } ?>
+
 
             <hr>
 

@@ -1,12 +1,17 @@
 <?php
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . "/auth.php";
 
 $unreadNotifications = 0;
 
-if (isset($_SESSION["user_id"])) {
+
+/*
+|--------------------------------------------------------------------------
+| Contar notificações não lidas
+|--------------------------------------------------------------------------
+*/
+
+if (isLoggedIn()) {
 
     require_once __DIR__ . "/db.php";
 
@@ -18,30 +23,49 @@ if (isset($_SESSION["user_id"])) {
     $stmt = $pdo->prepare($sql);
 
     $stmt->execute([
-        ":user_id" => $_SESSION["user_id"]
+        ":user_id" => currentUserId()
     ]);
 
-    $unreadNotifications = $stmt->fetchColumn();
+    $unreadNotifications = (int) $stmt->fetchColumn();
 }
 
 ?>
 
 <!DOCTYPE html>
+
 <html lang="pt">
 
 <head>
 
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <link rel="stylesheet" href="css/destyle.css">
-    <link rel="stylesheet" href="css/style.css">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-    <title><?php echo $pageTitle ?? "GameBacklog"; ?></title>
+    <link
+        rel="stylesheet"
+        href="css/destyle.css"
+    >
+
+    <link
+        rel="stylesheet"
+        href="css/style.css"
+    >
+
+    <title>
+        <?php echo htmlspecialchars(
+            $pageTitle ?? "GameBacklog",
+            ENT_QUOTES,
+            "UTF-8"
+        ); ?>
+    </title>
 
 </head>
 
 <body>
+
 
 <header>
 
@@ -49,29 +73,35 @@ if (isset($_SESSION["user_id"])) {
         <strong>GameBacklog</strong>
     </a>
 
+
     <nav>
 
         <a href="search.php">
             Jogos
         </a>
 
+
         <a href="users-search.php">
             Utilizadores
         </a>
 
-        <?php if (isset($_SESSION["user_id"])) { ?>
+
+        <?php if (isLoggedIn()) { ?>
 
             <a href="dashboard.php">
                 Dashboard
             </a>
 
+
             <a href="library.php">
                 Biblioteca
             </a>
 
+
             <a href="activity.php">
                 Atividade
             </a>
+
 
             <a href="notifications.php">
 
@@ -85,19 +115,23 @@ if (isset($_SESSION["user_id"])) {
 
             </a>
 
+
             <a href="profile.php">
                 Perfil
             </a>
 
+
             <a href="logout.php">
                 Terminar sessão
             </a>
+
 
         <?php } else { ?>
 
             <a href="login.php">
                 Entrar
             </a>
+
 
             <a href="register.php">
                 Criar conta
@@ -108,5 +142,6 @@ if (isset($_SESSION["user_id"])) {
     </nav>
 
 </header>
+
 
 <hr>
